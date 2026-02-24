@@ -1,15 +1,11 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Modal,
-  TextInput,
+  View, Text, StyleSheet, TouchableOpacity,
+  ScrollView, Modal, TextInput,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { useUser } from '../context/UserContext';
+import { useUser } from '../../context/UserContext';
 
 const HOW_IT_WORKS = [
   { step: '1', title: 'Connect to Mesh Network', desc: 'The app automatically connects to nearby devices using Bluetooth and Wi-Fi to form a mesh network — no internet required.' },
@@ -85,10 +81,10 @@ export default function AboutScreen() {
         activeOpacity={0.6}
       >
         <View style={styles.rowLeft}>
-          <Text style={styles.rowIcon}>{icon}</Text>
+          <Ionicons name={icon} size={20} color={textColor} />
           <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>{label}</Text>
         </View>
-        <Text style={[styles.chevron, { color: subColor }]}>›</Text>
+        <Ionicons name="chevron-forward" size={20} color={subColor} />
       </TouchableOpacity>
     );
   }
@@ -99,7 +95,7 @@ export default function AboutScreen() {
 
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={[styles.backArrow, { color: textColor }]}>←</Text>
+            <Ionicons name="arrow-back" size={24} color={textColor} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { fontSize: 20 * fontSize, color: textColor }]}>About</Text>
           <View style={{ width: 24 }} />
@@ -118,21 +114,21 @@ export default function AboutScreen() {
         <SectionCard title="APP INFO">
           <View style={[styles.row, { borderBottomWidth: 1, borderBottomColor: borderColor }]}>
             <View style={styles.rowLeft}>
-              <Text style={styles.rowIcon}>📱</Text>
+              <Ionicons name="phone-portrait-outline" size={20} color={textColor} />
               <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>Version</Text>
             </View>
             <Text style={[styles.rowValue, { fontSize: 14 * fontSize, color: subColor }]}>1.0.0</Text>
           </View>
           <View style={[styles.row, { borderBottomWidth: 1, borderBottomColor: borderColor }]}>
             <View style={styles.rowLeft}>
-              <Text style={styles.rowIcon}>🔨</Text>
+              <Ionicons name="hammer-outline" size={20} color={textColor} />
               <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>Build</Text>
             </View>
             <Text style={[styles.rowValue, { fontSize: 14 * fontSize, color: subColor }]}>2026.02</Text>
           </View>
           <View style={styles.row}>
             <View style={styles.rowLeft}>
-              <Text style={styles.rowIcon}>⚡</Text>
+              <Ionicons name="flash-outline" size={20} color={textColor} />
               <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>Platform</Text>
             </View>
             <Text style={[styles.rowValue, { fontSize: 14 * fontSize, color: subColor }]}>Expo / React Native</Text>
@@ -140,9 +136,9 @@ export default function AboutScreen() {
         </SectionCard>
 
         <SectionCard title="INFORMATION">
-          <RowPress icon="💡" label="How the App Works" onPress={() => setHowModal(true)} />
-          <RowPress icon="🙋" label="Help & FAQs" onPress={() => setHelpModal(true)} />
-          <RowPress icon="📄" label="Terms & Conditions" onPress={() => setTermsModal(true)} last />
+          <RowPress icon="bulb-outline" label="How the App Works" onPress={() => setHowModal(true)} />
+          <RowPress icon="help-circle-outline" label="Help & FAQs" onPress={() => setHelpModal(true)} />
+          <RowPress icon="document-text-outline" label="Terms & Conditions" onPress={() => setTermsModal(true)} last />
         </SectionCard>
 
         <View style={{ height: 100 }} />
@@ -155,7 +151,7 @@ export default function AboutScreen() {
             <View style={[styles.modalHeader, { borderBottomColor: borderColor }]}>
               <Text style={[styles.modalTitle, { fontSize: 18 * fontSize, color: textColor }]}>How the App Works</Text>
               <TouchableOpacity onPress={() => setHowModal(false)}>
-                <Text style={[styles.modalClose, { color: subColor }]}>✕</Text>
+                <Ionicons name="close" size={22} color={subColor} />
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={styles.modalScroll}>
@@ -182,7 +178,7 @@ export default function AboutScreen() {
             <View style={[styles.modalHeader, { borderBottomColor: borderColor }]}>
               <Text style={[styles.modalTitle, { fontSize: 18 * fontSize, color: textColor }]}>Help & FAQs</Text>
               <TouchableOpacity onPress={() => { setHelpModal(false); setSubmitted(false); setUserQuestion(''); }}>
-                <Text style={[styles.modalClose, { color: subColor }]}>✕</Text>
+                <Ionicons name="close" size={22} color={subColor} />
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
@@ -195,7 +191,7 @@ export default function AboutScreen() {
                 >
                   <View style={styles.faqRow}>
                     <Text style={[styles.faqQuestion, { fontSize: 14 * fontSize, color: textColor }]}>{item.q}</Text>
-                    <Text style={[styles.faqChevron, { color: subColor }]}>{expandedHelp === index ? '∧' : '∨'}</Text>
+                    <Ionicons name={expandedHelp === index ? 'chevron-up' : 'chevron-down'} size={16} color={subColor} />
                   </View>
                   {expandedHelp === index && (
                     <Text style={[styles.faqAnswer, { fontSize: 13 * fontSize, color: bodyColor }]}>{item.a}</Text>
@@ -251,7 +247,7 @@ export default function AboutScreen() {
             <View style={[styles.modalHeader, { borderBottomColor: borderColor }]}>
               <Text style={[styles.modalTitle, { fontSize: 18 * fontSize, color: textColor }]}>Terms & Conditions</Text>
               <TouchableOpacity onPress={() => setTermsModal(false)}>
-                <Text style={[styles.modalClose, { color: subColor }]}>✕</Text>
+                <Ionicons name="close" size={22} color={subColor} />
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={styles.modalScroll}>
@@ -271,7 +267,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { paddingHorizontal: 20 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 60, marginBottom: 24 },
-  backArrow: { fontSize: 24 },
   headerTitle: { fontWeight: '700' },
   appIdentity: { alignItems: 'center', marginBottom: 32 },
   appIconCircle: { width: 80, height: 80, borderRadius: 20, backgroundColor: '#d64045', justifyContent: 'center', alignItems: 'center', marginBottom: 12, shadowColor: '#d64045', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6 },
@@ -283,15 +278,12 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2, overflow: 'hidden' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16 },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  rowIcon: { fontSize: 18 },
   rowLabel: { fontWeight: '500' },
   rowValue: {},
-  chevron: { fontSize: 22 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
   modalTitle: { fontWeight: '700' },
-  modalClose: { fontSize: 18, padding: 4 },
   modalScroll: { padding: 20 },
   stepCard: { flexDirection: 'row', gap: 14, marginBottom: 20, alignItems: 'flex-start' },
   stepBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#d64045', justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
@@ -302,7 +294,6 @@ const styles = StyleSheet.create({
   faqItem: { paddingVertical: 14, borderBottomWidth: 1 },
   faqRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   faqQuestion: { fontWeight: '600', flex: 1, paddingRight: 12 },
-  faqChevron: { fontSize: 14 },
   faqAnswer: { lineHeight: 20, marginTop: 10 },
   askSection: { marginTop: 24, paddingTop: 20, borderTopWidth: 1 },
   askTitle: { fontWeight: '700', marginBottom: 4 },

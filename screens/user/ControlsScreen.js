@@ -1,15 +1,11 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Switch,
-  StyleSheet,
-  Modal,
+  View, Text, ScrollView, TouchableOpacity,
+  Switch, StyleSheet, Modal,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { useUser } from '../context/UserContext';
+import { useUser } from '../../context/UserContext';
 
 const FONT_SIZES = [
   { label: 'Small', value: 0.8 },
@@ -68,7 +64,7 @@ export default function ControlsScreen() {
         activeOpacity={0.6}
       >
         <View style={styles.rowLeft}>
-          <Text style={styles.rowIcon}>{icon}</Text>
+          <Ionicons name={icon} size={20} color={textColor} />
           <View>
             <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>{label}</Text>
             {sublabel && <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>{sublabel}</Text>}
@@ -76,7 +72,7 @@ export default function ControlsScreen() {
         </View>
         <View style={styles.rowRight}>
           {value && <Text style={[styles.rowValue, { fontSize: 13 * fontSize, color: subColor }]}>{value}</Text>}
-          <Text style={[styles.chevron, { color: subColor }]}>›</Text>
+          <Ionicons name="chevron-forward" size={20} color={subColor} />
         </View>
       </TouchableOpacity>
     );
@@ -86,18 +82,13 @@ export default function ControlsScreen() {
     return (
       <View style={[styles.row, !last && { borderBottomWidth: 1, borderBottomColor: borderColor }]}>
         <View style={styles.rowLeft}>
-          <Text style={styles.rowIcon}>{icon}</Text>
+          <Ionicons name={icon} size={20} color={textColor} />
           <View>
             <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>{label}</Text>
             {sublabel && <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>{sublabel}</Text>}
           </View>
         </View>
-        <Switch
-          value={value}
-          onValueChange={onValueChange}
-          trackColor={{ false: '#ddd', true: '#d64045' }}
-          thumbColor="#fff"
-        />
+        <Switch value={value} onValueChange={onValueChange} trackColor={{ false: '#ddd', true: '#d64045' }} thumbColor="#fff" />
       </View>
     );
   }
@@ -108,81 +99,41 @@ export default function ControlsScreen() {
 
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={[styles.backArrow, { color: textColor }]}>←</Text>
+            <Ionicons name="arrow-back" size={24} color={textColor} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { fontSize: 20 * fontSize, color: textColor }]}>Controls</Text>
           <View style={{ width: 24 }} />
         </View>
 
         <SectionCard title="TEXT">
-          <RowPress
-            icon="🔤"
-            label="Text Size"
-            sublabel="Adjust font size across the app"
-            value={fontLabel}
-            onPress={() => setFontModal(true)}
-            last
-          />
+          <RowPress icon="text-outline" label="Text Size" sublabel="Adjust font size across the app" value={fontLabel} onPress={() => setFontModal(true)} last />
         </SectionCard>
 
         <SectionCard title="SOS BUTTON">
-          <RowPress
-            icon="🔴"
-            label="Button Size"
-            sublabel="Resize the SOS button"
-            value={sosLabel}
-            onPress={() => { setPreviewSosSize(sosSize); setSosModal(true); }}
-          />
-          <RowToggle
-            icon="📳"
-            label="Shake to SOS"
-            sublabel="Shake your phone to trigger SOS"
-            value={shakeToSOS}
-            onValueChange={setShakeToSOS}
-            last
-          />
+          <RowPress icon="radio-button-on-outline" label="Button Size" sublabel="Resize the SOS button" value={sosLabel} onPress={() => { setPreviewSosSize(sosSize); setSosModal(true); }} />
+          <RowToggle icon="phone-portrait-outline" label="Shake to SOS" sublabel="Shake your phone to trigger SOS" value={shakeToSOS} onValueChange={setShakeToSOS} last />
         </SectionCard>
 
         <SectionCard title="DISPLAY">
-          <RowToggle
-            icon="🎨"
-            label="Color Blind Mode"
-            sublabel="Replaces red with high-visibility orange"
-            value={colorBlindMode}
-            onValueChange={setColorBlindMode}
-          />
-          <RowToggle
-            icon="✨"
-            label="Reduce Motion"
-            sublabel="Minimise animations"
-            value={reduceMotion}
-            onValueChange={setReduceMotion}
-            last
-          />
+          <RowToggle icon="color-palette-outline" label="Color Blind Mode" sublabel="Replaces red with high-visibility orange" value={colorBlindMode} onValueChange={setColorBlindMode} />
+          <RowToggle icon="sparkles-outline" label="Reduce Motion" sublabel="Minimise animations" value={reduceMotion} onValueChange={setReduceMotion} last />
         </SectionCard>
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Font Size Modal */}
       <Modal visible={fontModal} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setFontModal(false)} activeOpacity={1}>
           <View style={[styles.modalCard, { backgroundColor: modalBg }]}>
             <Text style={[styles.modalTitle, { fontSize: 11 * fontSize, borderBottomColor: borderColor }]}>TEXT SIZE</Text>
             <View style={[styles.previewContainer, { borderBottomColor: borderColor }]}>
-              <Text style={[styles.fontPreviewText, { fontSize: 16 * fontSize, color: textColor }]}>
-                Emergency Alert
-              </Text>
+              <Text style={[styles.fontPreviewText, { fontSize: 16 * fontSize, color: textColor }]}>Emergency Alert</Text>
               <Text style={[styles.previewLabel, { color: subColor }]}>Preview</Text>
             </View>
             {FONT_SIZES.map((opt) => (
               <TouchableOpacity
                 key={opt.label}
-                style={[
-                  styles.modalOption,
-                  { borderBottomColor: borderColor },
-                  fontSize === opt.value && { backgroundColor: darkMode ? '#2a1a1a' : '#fff5f5' },
-                ]}
+                style={[styles.modalOption, { borderBottomColor: borderColor }, fontSize === opt.value && { backgroundColor: darkMode ? '#2a1a1a' : '#fff5f5' }]}
                 onPress={() => { setFontSize(opt.value); setFontModal(false); }}
               >
                 <Text style={[styles.modalOptionText, { fontSize: 15 * fontSize, color: textColor }, fontSize === opt.value && { color: '#d64045', fontWeight: '600' }]}>
@@ -195,22 +146,12 @@ export default function ControlsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* SOS Size Modal */}
       <Modal visible={sosModal} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setSosModal(false)} activeOpacity={1}>
           <View style={[styles.modalCard, { backgroundColor: modalBg }]}>
             <Text style={[styles.modalTitle, { fontSize: 11 * fontSize, borderBottomColor: borderColor }]}>SOS BUTTON SIZE</Text>
             <View style={[styles.previewContainer, { borderBottomColor: borderColor }]}>
-              <View style={[
-                styles.previewCircle,
-                {
-                  width: previewSosSize * 0.45,
-                  height: previewSosSize * 0.45,
-                  borderRadius: previewSosSize * 0.225,
-                  backgroundColor: sosColor,
-                  shadowColor: sosColor,
-                }
-              ]}>
+              <View style={[styles.previewCircle, { width: previewSosSize * 0.45, height: previewSosSize * 0.45, borderRadius: previewSosSize * 0.225, backgroundColor: sosColor, shadowColor: sosColor }]}>
                 <Text style={[styles.previewText, { fontSize: previewSosSize * 0.08 }]}>SOS</Text>
               </View>
               <Text style={[styles.previewLabel, { color: subColor }]}>Preview</Text>
@@ -218,11 +159,7 @@ export default function ControlsScreen() {
             {SOS_SIZES.map((opt) => (
               <TouchableOpacity
                 key={opt.label}
-                style={[
-                  styles.modalOption,
-                  { borderBottomColor: borderColor },
-                  sosSize === opt.value && { backgroundColor: darkMode ? '#2a1a1a' : '#fff5f5' },
-                ]}
+                style={[styles.modalOption, { borderBottomColor: borderColor }, sosSize === opt.value && { backgroundColor: darkMode ? '#2a1a1a' : '#fff5f5' }]}
                 onPress={() => { setSosSize(opt.value); setSosModal(false); }}
                 onPressIn={() => setPreviewSosSize(opt.value)}
               >
@@ -243,7 +180,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { paddingHorizontal: 20 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 60, marginBottom: 28 },
-  backArrow: { fontSize: 24 },
   headerTitle: { fontWeight: '700' },
   section: { marginBottom: 24 },
   sectionLabel: { fontWeight: '700', letterSpacing: 1, marginBottom: 8, marginLeft: 4 },
@@ -251,11 +187,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowIcon: { fontSize: 18 },
   rowLabel: { fontWeight: '500' },
   rowSublabel: { marginTop: 2 },
   rowValue: {},
-  chevron: { fontSize: 22 },
   previewContainer: { alignItems: 'center', paddingVertical: 20, borderBottomWidth: 1, marginBottom: 4 },
   previewCircle: { justifyContent: 'center', alignItems: 'center', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 8 },
   previewText: { color: '#fff', fontWeight: '800', letterSpacing: 2 },

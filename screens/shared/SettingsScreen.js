@@ -1,18 +1,15 @@
 import React from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Switch,
-  StyleSheet,
+  View, Text, ScrollView,
+  TouchableOpacity, Switch, StyleSheet,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useUser } from '../context/UserContext';
+import { useUser } from '../../context/UserContext';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function SettingsScreen() {
   const navigation = useNavigation();
-  const { name, fontSize, darkMode, setDarkMode } = useUser();
+  const { name, fontSize, darkMode, setDarkMode, role, authorityType } = useUser();
 
   const bg = darkMode ? '#111' : '#faf5f5';
   const cardBg = darkMode ? '#1e1e1e' : '#fff';
@@ -20,12 +17,23 @@ export default function SettingsScreen() {
   const subColor = darkMode ? '#aaa' : '#999';
   const borderColor = darkMode ? '#2a2a2a' : '#f2f2f2';
 
+  const isAuthority = role === 'Authority';
+
   const sections = [
-    { icon: '🌙', label: 'Dark Mode', isDarkMode: true },
-    { icon: '👤', label: 'Profile', screen: 'Profile' },
-    { icon: '🚨', label: 'Emergency Alerts', screen: 'EmergencyAlerts' },
-    { icon: '🎛️', label: 'Controls', screen: 'Controls' },
-    { icon: 'ℹ️', label: 'About', screen: 'About' },
+    { icon: 'moon-outline', label: 'Dark Mode', isDarkMode: true },
+    { icon: 'person-outline', label: 'Profile', screen: 'Profile' },
+    {
+      icon: 'notifications-outline', label: 'Emergency Alerts',
+      screen: isAuthority ? 'AuthorityEmergencyAlerts' : 'EmergencyAlerts',
+    },
+    {
+      icon: 'options-outline', label: 'Controls',
+      screen: isAuthority ? 'AuthorityControls' : 'Controls',
+    },
+    {
+      icon: 'information-circle-outline', label: 'About',
+      screen: isAuthority ? 'AuthorityAbout' : 'About',
+    },
   ];
 
   return (
@@ -37,11 +45,18 @@ export default function SettingsScreen() {
 
         <View style={styles.profileSection}>
           <View style={[styles.avatarCircle, { backgroundColor: darkMode ? '#333' : '#e8e0e0' }]}>
-            <Text style={styles.avatarIcon}>👤</Text>
+            <Text style={styles.avatarIcon}>{isAuthority ? '👮' : '👤'}</Text>
           </View>
           <Text style={[styles.profileName, { fontSize: 20 * fontSize, color: textColor }]}>
             {name}
           </Text>
+          {isAuthority && (
+            <View style={styles.authorityBadge}>
+              <Text style={[styles.authorityBadgeText, { fontSize: 11 * fontSize }]}>
+                🔐 {authorityType || 'AUTHORITY'}
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={[styles.card, { backgroundColor: cardBg }]}>
@@ -55,7 +70,7 @@ export default function SettingsScreen() {
                 activeOpacity={item.isDarkMode ? 1 : 0.6}
               >
                 <View style={styles.rowLeft}>
-                  <Text style={styles.rowIcon}>{item.icon}</Text>
+                  <Ionicons name={item.icon} size={20} color={textColor} />
                   <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>
                     {item.label}
                   </Text>
@@ -93,7 +108,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08, shadowRadius: 8, elevation: 4,
   },
   avatarIcon: { fontSize: 44 },
-  profileName: { fontWeight: '700' },
+  profileName: { fontWeight: '700', marginBottom: 8 },
+  authorityBadge: {
+    backgroundColor: '#d64045', paddingHorizontal: 14,
+    paddingVertical: 4, borderRadius: 20,
+  },
+  authorityBadgeText: { color: '#fff', fontWeight: '700', letterSpacing: 1 },
   card: {
     borderRadius: 16, shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06,

@@ -1,54 +1,49 @@
 import React, { useRef } from 'react';
-import {
-  View, Text, TouchableOpacity,
-  Animated, Dimensions, StyleSheet,
-} from 'react-native';
+import { View, Text, TouchableOpacity, Animated, Dimensions, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { useUser } from '../context/UserContext';
 
-import HomeScreen from '../screens/user/HomeScreen';
-import MessagesScreen from '../screens/user/MessagesScreen';
+import AuthorityDashboard from '../screens/authority/AuthorityDashboard';
+import AuthorityOverviewMap from '../screens/authority/AuthorityOverviewMap';
 import SettingsScreen from '../screens/shared/SettingsScreen';
 import ProfileScreen from '../screens/shared/ProfileScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
-import EmergencyAlertsScreen from '../screens/user/EmergencyAlertsScreen';
-import ControlsScreen from '../screens/user/ControlsScreen';
-import AboutScreen from '../screens/user/AboutScreen';
+import AuthorityControlsScreen from '../screens/authority/AuthorityControlsScreen';
+import AuthorityEmergencyAlertsScreen from '../screens/authority/AuthorityEmergencyAlertsScreen';
+import AuthorityAboutScreen from '../screens/authority/AuthorityAboutScreen';
+import MapScreen from '../screens/authority/MapScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 const { width } = Dimensions.get('window');
 
-const ICONS = {
-  Home: ({ active }) => (
-    <Ionicons name={active ? 'home' : 'home-outline'} size={24} color={active ? '#111' : '#aaa'} />
-  ),
-  Messages: ({ active }) => (
-    <Ionicons name={active ? 'chatbubble' : 'chatbubble-outline'} size={24} color={active ? '#111' : '#aaa'} />
-  ),
-  Settings: ({ active }) => (
-    <Ionicons name={active ? 'settings' : 'settings-outline'} size={24} color={active ? '#111' : '#aaa'} />
-  ),
-};
+const TABS = [
+  { name: 'Dashboard', icon: 'grid-outline', iconActive: 'grid', label: 'Dashboard' },
+  { name: 'Overview', icon: 'map-outline', iconActive: 'map', label: 'Map' },
+  { name: 'Settings', icon: 'settings-outline', iconActive: 'settings', label: 'Settings' },
+];
 
-const TAB_COUNT = 3;
 const BAR_HORIZONTAL_MARGIN = 20;
 const BAR_WIDTH = width - BAR_HORIZONTAL_MARGIN * 2;
+const TAB_COUNT = 3;
 const TAB_WIDTH = BAR_WIDTH / TAB_COUNT;
 const CIRCLE_SIZE = 54;
 const BAR_HEIGHT = 64;
 const NOTCH_RADIUS = CIRCLE_SIZE / 2 + 6;
 
-function CustomTabBar({ state, descriptors, navigation }) {
+function CustomTabBar({ state, navigation }) {
+  const { darkMode } = useUser();
   const translateX = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const activeIndex = state.index;
+  React.useEffect(() => {
+    translateX.setValue(state.index * TAB_WIDTH);
+  }, []);
 
   const handlePress = (index, routeName, isFocused) => {
     if (isFocused) return;
-
     Animated.parallel([
       Animated.spring(translateX, {
         toValue: index * TAB_WIDTH,
@@ -57,81 +52,69 @@ function CustomTabBar({ state, descriptors, navigation }) {
         friction: 9,
       }),
       Animated.sequence([
-        Animated.timing(scaleAnim, {
-          toValue: 0.75,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          useNativeDriver: true,
-          tension: 120,
-          friction: 6,
-        }),
+        Animated.timing(scaleAnim, { toValue: 0.75, duration: 100, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 120, friction: 6 }),
       ]),
     ]).start();
-
     navigation.navigate(routeName);
   };
-
-  React.useEffect(() => {
-    translateX.setValue(activeIndex * TAB_WIDTH);
-  }, []);
 
   return (
     <View style={styles.wrapper}>
       <View style={styles.bar}>
         <Animated.View style={[styles.notch, { transform: [{ translateX }] }]} />
         {state.routes.map((route, index) => {
+          const tab = TABS[index];
           const isFocused = state.index === index;
-          const Icon = ICONS[route.name] || ICONS.Home;
           return (
             <TouchableOpacity
               key={route.key}
+              style={styles.tab}
               onPress={() => handlePress(index, route.name, isFocused)}
               activeOpacity={0.7}
-              style={styles.tab}
             >
-              {!isFocused && <Icon active={false} />}
+              {!isFocused && (
+                <Ionicons name={tab.icon} size={24} color="#aaa" />
+              )}
             </TouchableOpacity>
           );
         })}
       </View>
 
       <Animated.View style={[styles.activeCircle, { transform: [{ translateX }, { scale: scaleAnim }] }]}>
-        {state.routes[activeIndex] && (() => {
-          const Icon = ICONS[state.routes[activeIndex].name] || ICONS.Home;
-          return <Icon active={true} />;
-        })()}
+        <Ionicons
+          name={TABS[state.index].iconActive}
+          size={24}
+          color="#111"
+        />
       </Animated.View>
     </View>
   );
 }
 
-// Your original tab navigator — unchanged
-function UserTabNavigator() {
+function AuthorityTabNavigator() {
   return (
     <Tab.Navigator
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Messages" component={MessagesScreen} />
+      <Tab.Screen name="Dashboard" component={AuthorityDashboard} />
+      <Tab.Screen name="Overview" component={AuthorityOverviewMap} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );
 }
 
-// Stack wrapper so all user screens are reachable
-export default function BottomTabs() {
+export default function AuthorityTabs() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="UserMain" component={UserTabNavigator} />
+      <Stack.Screen name="AuthorityMain" component={AuthorityTabNavigator} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Chat" component={ChatScreen} />
-      <Stack.Screen name="EmergencyAlerts" component={EmergencyAlertsScreen} />
-      <Stack.Screen name="Controls" component={ControlsScreen} />
-      <Stack.Screen name="About" component={AboutScreen} />
+      <Stack.Screen name="AuthorityControls" component={AuthorityControlsScreen} />
+      <Stack.Screen name="AuthorityEmergencyAlerts" component={AuthorityEmergencyAlertsScreen} />
+      <Stack.Screen name="AuthorityAbout" component={AuthorityAboutScreen} />
+      <Stack.Screen name="Map" component={MapScreen} />
     </Stack.Navigator>
   );
 }
@@ -143,7 +126,6 @@ const styles = StyleSheet.create({
     left: BAR_HORIZONTAL_MARGIN,
     width: BAR_WIDTH,
     height: BAR_HEIGHT + CIRCLE_SIZE / 2,
-    alignItems: 'flex-end',
   },
   bar: {
     position: 'absolute',
@@ -184,10 +166,10 @@ const styles = StyleSheet.create({
     width: CIRCLE_SIZE,
     height: CIRCLE_SIZE,
     borderRadius: CIRCLE_SIZE / 2,
-    backgroundColor: '#39e84e',
+    backgroundColor: '#d64045',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#39e84e',
+    shadowColor: '#d64045',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.55,
     shadowRadius: 10,

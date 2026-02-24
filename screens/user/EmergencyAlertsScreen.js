@@ -1,50 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Switch,
-  StyleSheet,
-  Modal,
-  Vibration,
+  View, Text, ScrollView, TouchableOpacity,
+  Switch, StyleSheet, Modal, Vibration,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Audio } from 'expo-av';
-import { useUser } from '../context/UserContext';
+import { useUser } from '../../context/UserContext';
 
 const ALERT_SOUNDS = [
-  { id: '1', label: '🔥 Fire Alert', file: require('../assets/sounds/fire-alert.mp3') },
-  { id: '2', label: '📡 Signal Alert', file: require('../assets/sounds/signal-alert.mp3') },
-  { id: '3', label: '🔔 Simple Tone', file: require('../assets/sounds/simple-tone-loop.mp3') },
+  { id: '1', label: '🔥 Fire Alert', file: require('../../assets/sounds/fire-alert.mp3') },
+  { id: '2', label: '📡 Signal Alert', file: require('../../assets/sounds/signal-alert.mp3') },
+  { id: '3', label: '🔔 Simple Tone', file: require('../../assets/sounds/simple-tone-loop.mp3') },
 ];
-
-function SectionCard({ title, children, fontSize, subColor }) {
-  return (
-    <View style={styles.section}>
-      <Text style={[styles.sectionLabel, { fontSize: 11 * fontSize, color: subColor }]}>{title}</Text>
-      <View style={styles.card}>{children}</View>
-    </View>
-  );
-}
 
 function RowToggle({ icon, label, sublabel, value, onValueChange, last, fontSize, textColor, subColor, borderColor, cardBg }) {
   return (
     <View style={[styles.row, !last && { borderBottomWidth: 1, borderBottomColor: borderColor }, { backgroundColor: cardBg }]}>
       <View style={styles.rowLeft}>
-        <Text style={styles.rowIcon}>{icon}</Text>
+        <Ionicons name={icon} size={20} color={textColor} />
         <View>
           <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>{label}</Text>
           {sublabel && <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>{sublabel}</Text>}
         </View>
       </View>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: '#ddd', true: '#d64045' }}
-        thumbColor="#fff"
-      />
+      <Switch value={value} onValueChange={onValueChange} trackColor={{ false: '#ddd', true: '#d64045' }} thumbColor="#fff" />
     </View>
   );
 }
@@ -57,7 +38,7 @@ function RowPress({ icon, label, sublabel, value, onPress, last, fontSize, textC
       activeOpacity={0.6}
     >
       <View style={styles.rowLeft}>
-        <Text style={styles.rowIcon}>{icon}</Text>
+        <Ionicons name={icon} size={20} color={textColor} />
         <View>
           <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>{label}</Text>
           {sublabel && <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>{sublabel}</Text>}
@@ -65,7 +46,7 @@ function RowPress({ icon, label, sublabel, value, onPress, last, fontSize, textC
       </View>
       <View style={styles.rowRight}>
         {value && <Text style={[styles.rowValue, { fontSize: 13 * fontSize, color: subColor }]}>{value}</Text>}
-        <Text style={[styles.chevron, { color: subColor }]}>›</Text>
+        <Ionicons name="chevron-forward" size={20} color={subColor} />
       </View>
     </TouchableOpacity>
   );
@@ -90,20 +71,14 @@ export default function EmergencyAlertsScreen() {
   const borderColor = darkMode ? '#2a2a2a' : '#f2f2f2';
   const modalBg = darkMode ? '#1e1e1e' : '#fff';
 
-  // Derive selected sound object from persisted ID
   const selectedSound = ALERT_SOUNDS.find(s => s.id === alertSoundId) ?? ALERT_SOUNDS[0];
-
-  // Sound playback — UI only, no need to persist
   const [soundModalVisible, setSoundModalVisible] = useState(false);
   const [currentSound, setCurrentSound] = useState(null);
   const [playingId, setPlayingId] = useState(null);
 
   useEffect(() => {
     return () => {
-      if (currentSound) {
-        currentSound.stopAsync();
-        currentSound.unloadAsync();
-      }
+      if (currentSound) { currentSound.stopAsync(); currentSound.unloadAsync(); }
     };
   }, [currentSound]);
 
@@ -169,7 +144,7 @@ export default function EmergencyAlertsScreen() {
 
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={[styles.backArrow, { color: textColor }]}>←</Text>
+            <Ionicons name="arrow-back" size={24} color={textColor} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { fontSize: 20 * fontSize, color: textColor }]}>Emergency Alerts</Text>
           <View style={{ width: 24 }} />
@@ -178,11 +153,11 @@ export default function EmergencyAlertsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { fontSize: 11 * fontSize, color: subColor }]}>SOUND</Text>
           <View style={[styles.card, { backgroundColor: cardBg }]}>
-            <RowToggle icon="🔊" label="Sound" sublabel="Play audio on alert" value={alertSound} onValueChange={setAlertSound} {...rowProps} />
-            <RowPress icon="🎵" label="Alert Sound" sublabel="Choose your alert tone" value={selectedSound.label} onPress={() => setSoundModalVisible(true)} {...rowProps} />
+            <RowToggle icon="volume-high-outline" label="Sound" sublabel="Play audio on alert" value={alertSound} onValueChange={setAlertSound} {...rowProps} />
+            <RowPress icon="musical-notes-outline" label="Alert Sound" sublabel="Choose your alert tone" value={selectedSound.label} onPress={() => setSoundModalVisible(true)} {...rowProps} />
             <View style={[styles.row, { borderBottomWidth: 1, borderBottomColor: borderColor, backgroundColor: cardBg, flexDirection: 'column', alignItems: 'flex-start', paddingBottom: 8 }]}>
               <View style={styles.rowLeft}>
-                <Text style={styles.rowIcon}>🔉</Text>
+                <Ionicons name="volume-medium-outline" size={20} color={textColor} />
                 <View>
                   <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>Alert Volume</Text>
                   <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>{Math.round(alertVolume * 100)}%</Text>
@@ -200,21 +175,21 @@ export default function EmergencyAlertsScreen() {
                 thumbTintColor="#d64045"
               />
             </View>
-            <RowToggle icon="🔁" label="Repeat Alert" sublabel="Keep alerting until dismissed" value={alertRepeat} onValueChange={setAlertRepeat} last {...rowProps} />
+            <RowToggle icon="repeat-outline" label="Repeat Alert" sublabel="Keep alerting until dismissed" value={alertRepeat} onValueChange={setAlertRepeat} last {...rowProps} />
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { fontSize: 11 * fontSize, color: subColor }]}>HAPTICS</Text>
           <View style={[styles.card, { backgroundColor: cardBg }]}>
-            <RowToggle icon="📳" label="Vibration" sublabel="Vibrate on alert" value={alertVibration} onValueChange={handleVibrationToggle} last {...rowProps} />
+            <RowToggle icon="phone-portrait-outline" label="Vibration" sublabel="Vibrate on alert" value={alertVibration} onValueChange={handleVibrationToggle} last {...rowProps} />
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { fontSize: 11 * fontSize, color: subColor }]}>VISUAL</Text>
           <View style={[styles.card, { backgroundColor: cardBg }]}>
-            <RowToggle icon="🔦" label="Flashlight" sublabel="Flash torch on alert" value={alertFlashlight} onValueChange={setAlertFlashlight} last {...rowProps} />
+            <RowToggle icon="flashlight-outline" label="Flashlight" sublabel="Flash torch on alert" value={alertFlashlight} onValueChange={setAlertFlashlight} last {...rowProps} />
           </View>
         </View>
 
@@ -264,7 +239,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { paddingHorizontal: 20 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 60, marginBottom: 28 },
-  backArrow: { fontSize: 24 },
   headerTitle: { fontWeight: '700' },
   section: { marginBottom: 24 },
   sectionLabel: { fontWeight: '700', letterSpacing: 1, marginBottom: 8, marginLeft: 4 },
@@ -272,11 +246,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowIcon: { fontSize: 18 },
   rowLabel: { fontWeight: '500' },
   rowSublabel: { marginTop: 2 },
   rowValue: {},
-  chevron: { fontSize: 22 },
   slider: { width: '100%', marginTop: 8 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   modalCard: { borderRadius: 20, width: '80%', paddingVertical: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 20, elevation: 10 },

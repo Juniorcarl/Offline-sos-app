@@ -11,7 +11,8 @@ const DEFAULTS = {
   colorBlindMode: false,
   shakeToSOS: false,
   darkMode: false,
-  // Emergency alert settings
+  role: 'User',
+  authorityType: '',
   alertSound: true,
   alertVibration: true,
   alertFlashlight: true,
@@ -28,6 +29,8 @@ export function UserProvider({ children }) {
   const [colorBlindMode, setColorBlindModeState] = useState(DEFAULTS.colorBlindMode);
   const [shakeToSOS, setShakeToSOSState] = useState(DEFAULTS.shakeToSOS);
   const [darkMode, setDarkModeState] = useState(DEFAULTS.darkMode);
+  const [role, setRoleState] = useState(DEFAULTS.role);
+  const [authorityType, setAuthorityTypeState] = useState(DEFAULTS.authorityType);
   const [alertSound, setAlertSoundState] = useState(DEFAULTS.alertSound);
   const [alertVibration, setAlertVibrationState] = useState(DEFAULTS.alertVibration);
   const [alertFlashlight, setAlertFlashlightState] = useState(DEFAULTS.alertFlashlight);
@@ -42,11 +45,11 @@ export function UserProvider({ children }) {
         const keys = [
           'name', 'fontSize', 'sosSize', 'reduceMotion',
           'colorBlindMode', 'shakeToSOS', 'darkMode',
+          'role', 'authorityType',
           'alertSound', 'alertVibration', 'alertFlashlight',
           'alertRepeat', 'alertVolume', 'alertSoundId',
         ];
         const pairs = await AsyncStorage.multiGet(keys);
-
         pairs.forEach(([key, value]) => {
           if (value === null) return;
           const parsed = JSON.parse(value);
@@ -57,6 +60,8 @@ export function UserProvider({ children }) {
           if (key === 'colorBlindMode') setColorBlindModeState(parsed);
           if (key === 'shakeToSOS') setShakeToSOSState(parsed);
           if (key === 'darkMode') setDarkModeState(parsed);
+          if (key === 'role') setRoleState(parsed);
+          if (key === 'authorityType') setAuthorityTypeState(parsed);
           if (key === 'alertSound') setAlertSoundState(parsed);
           if (key === 'alertVibration') setAlertVibrationState(parsed);
           if (key === 'alertFlashlight') setAlertFlashlightState(parsed);
@@ -70,7 +75,6 @@ export function UserProvider({ children }) {
         setLoaded(true);
       }
     };
-
     loadSettings();
   }, []);
 
@@ -89,6 +93,8 @@ export function UserProvider({ children }) {
   const setColorBlindMode = (v) => { setColorBlindModeState(v); save('colorBlindMode', v); };
   const setShakeToSOS = (v) => { setShakeToSOSState(v); save('shakeToSOS', v); };
   const setDarkMode = (v) => { setDarkModeState(v); save('darkMode', v); };
+  const setRole = (v) => { setRoleState(v); save('role', v); };
+  const setAuthorityType = (v) => { setAuthorityTypeState(v); save('authorityType', v); };
   const setAlertSound = (v) => { setAlertSoundState(v); save('alertSound', v); };
   const setAlertVibration = (v) => { setAlertVibrationState(v); save('alertVibration', v); };
   const setAlertFlashlight = (v) => { setAlertFlashlightState(v); save('alertFlashlight', v); };
@@ -101,6 +107,7 @@ export function UserProvider({ children }) {
       await AsyncStorage.multiRemove([
         'name', 'fontSize', 'sosSize', 'reduceMotion',
         'colorBlindMode', 'shakeToSOS', 'darkMode',
+        'role', 'authorityType',
         'alertSound', 'alertVibration', 'alertFlashlight',
         'alertRepeat', 'alertVolume', 'alertSoundId',
       ]);
@@ -111,6 +118,8 @@ export function UserProvider({ children }) {
       setColorBlindModeState(DEFAULTS.colorBlindMode);
       setShakeToSOSState(DEFAULTS.shakeToSOS);
       setDarkModeState(DEFAULTS.darkMode);
+      setRoleState(DEFAULTS.role);
+      setAuthorityTypeState(DEFAULTS.authorityType);
       setAlertSoundState(DEFAULTS.alertSound);
       setAlertVibrationState(DEFAULTS.alertVibration);
       setAlertFlashlightState(DEFAULTS.alertFlashlight);
@@ -133,6 +142,8 @@ export function UserProvider({ children }) {
       colorBlindMode, setColorBlindMode,
       shakeToSOS, setShakeToSOS,
       darkMode, setDarkMode,
+      role, setRole,
+      authorityType, setAuthorityType,
       alertSound, setAlertSound,
       alertVibration, setAlertVibration,
       alertFlashlight, setAlertFlashlight,

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Animated, Alert, Vibration } from 'react-native';
-import { useUser } from '../context/UserContext';
+import { useUser } from '../../context/UserContext';
 import { Accelerometer } from 'expo-sensors';
 
 const SHAKE_THRESHOLD = 2.5;
@@ -89,11 +89,10 @@ export default function HomeScreen() {
     <View style={{ flex: 1, backgroundColor: bg, paddingHorizontal: 20 }}>
 
       {/* Header */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 60 }}>
+      <View style={{ marginTop: 60 }}>
         <Text style={{ color: textColor, fontSize: 18 * fontSize, fontWeight: '500' }}>
           Devices Connected
         </Text>
-        <Text style={{ fontSize: 20 }}>🔔</Text>
       </View>
 
       {/* Shake to SOS indicator */}
