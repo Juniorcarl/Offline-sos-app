@@ -1,3 +1,7 @@
+// ═══════════════════════════════════════════════════════════════════
+// ControlsScreen.js  (screens/ControlsScreen.js)
+// ═══════════════════════════════════════════════════════════════════
+
 import React, { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
@@ -8,16 +12,16 @@ import { useNavigation } from '@react-navigation/native';
 import { useUser } from '../context/UserContext';
 
 const FONT_SIZES = [
-  { label: 'Small', value: 0.8 },
-  { label: 'Default', value: 1 },
-  { label: 'Large', value: 1.2 },
+  { label: 'Small',       value: 0.8 },
+  { label: 'Default',     value: 1   },
+  { label: 'Large',       value: 1.2 },
   { label: 'Extra Large', value: 1.4 },
 ];
 
 const SOS_SIZES = [
-  { label: 'Small', value: 180 },
-  { label: 'Default', value: 220 },
-  { label: 'Large', value: 260 },
+  { label: 'Small',       value: 180 },
+  { label: 'Default',     value: 220 },
+  { label: 'Large',       value: 260 },
   { label: 'Extra Large', value: 300 },
 ];
 
@@ -32,25 +36,27 @@ export default function ControlsScreen() {
     darkMode,
   } = useUser();
 
-  const [fontModal, setFontModal] = useState(false);
-  const [sosModal, setSosModal] = useState(false);
+  const [fontModal, setFontModal]         = useState(false);
+  const [sosModal, setSosModal]           = useState(false);
   const [previewSosSize, setPreviewSosSize] = useState(sosSize);
 
   const fontLabel = FONT_SIZES.find(f => f.value === fontSize)?.label ?? 'Default';
-  const sosLabel = SOS_SIZES.find(s => s.value === sosSize)?.label ?? 'Default';
+  const sosLabel  = SOS_SIZES.find(s => s.value === sosSize)?.label  ?? 'Default';
 
-  const bg = darkMode ? '#111' : '#faf5f5';
-  const cardBg = darkMode ? '#1e1e1e' : '#fff';
-  const textColor = darkMode ? '#fff' : '#1a1a1a';
-  const subColor = darkMode ? '#888' : '#aaa';
+  const bg        = darkMode ? '#111'    : '#faf5f5';
+  const cardBg    = darkMode ? '#1e1e1e' : '#fff';
+  const textColor = darkMode ? '#fff'    : '#1a1a1a';
+  const subColor  = darkMode ? '#888'    : '#aaa';
   const borderColor = darkMode ? '#2a2a2a' : '#f2f2f2';
-  const modalBg = darkMode ? '#1e1e1e' : '#fff';
-  const sosColor = colorBlindMode ? '#E87722' : '#d64045';
+  const modalBg   = darkMode ? '#1e1e1e' : '#fff';
+  const sosColor  = colorBlindMode ? '#E87722' : '#d64045';
 
   function SectionCard({ title, children }) {
     return (
       <View style={styles.section}>
-        <Text style={[styles.sectionLabel, { fontSize: 11 * fontSize, color: subColor }]}>{title}</Text>
+        <Text style={[styles.sectionLabel, { fontSize: 11 * fontSize, color: subColor }]}>
+          {title}
+        </Text>
         <View style={[styles.card, { backgroundColor: cardBg }]}>{children}</View>
       </View>
     );
@@ -81,9 +87,9 @@ export default function ControlsScreen() {
   function RowToggle({ icon, label, sublabel, value, onValueChange, last }) {
     return (
       <View style={[styles.row, !last && { borderBottomWidth: 1, borderBottomColor: borderColor }]}>
-        <View style={styles.rowLeft}>
+        <View style={[styles.rowLeft, { flex: 1, marginRight: 12 }]}>
           <Ionicons name={icon} size={20} color={textColor} />
-          <View style={{ flex: 1, marginRight: 12 }}>
+          <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>{label}</Text>
             {sublabel && <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>{sublabel}</Text>}
           </View>
@@ -110,7 +116,7 @@ export default function ControlsScreen() {
           <View style={{ width: 24 }} />
         </View>
 
-        {/* ── Text size ──────────────────────────────────────────────────── */}
+        {/* Text size */}
         <SectionCard title="TEXT">
           <RowPress
             icon="text-outline"
@@ -122,7 +128,7 @@ export default function ControlsScreen() {
           />
         </SectionCard>
 
-        {/* ── SOS Button ─────────────────────────────────────────────────── */}
+        {/* SOS button size */}
         <SectionCard title="SOS BUTTON">
           <RowPress
             icon="radio-button-on-outline"
@@ -134,22 +140,22 @@ export default function ControlsScreen() {
           />
         </SectionCard>
 
-        {/* ── Shake to SOS ───────────────────────────────────────────────── */}
+        {/* Shake to SOS */}
         <SectionCard title="SHAKE TO SOS">
-          {/* Always-on info row — not a toggle */}
+          {/* Always-on info row */}
           <View style={[styles.row, { borderBottomWidth: 1, borderBottomColor: borderColor }]}>
-            <View style={styles.rowLeft}>
+            <View style={[styles.rowLeft, { flex: 1, marginRight: 12 }]}>
               <Ionicons name="phone-portrait-outline" size={20} color={textColor} />
-              <View style={{ flex: 1, marginRight: 12 }}>
+              <View style={{ flex: 1 }}>
                 <Text style={[styles.rowLabel, { fontSize: 15 * fontSize, color: textColor }]}>
                   Shake to SOS
                 </Text>
                 <Text style={[styles.rowSublabel, { fontSize: 11 * fontSize, color: subColor }]}>
-                  Always active — shaking sends "Help! I need immediate assistance" to authorities instantly
+                  Always active — shaking sends "Help! I need immediate assistance" to authorities
                 </Text>
               </View>
             </View>
-            {/* Always-on badge */}
+            {/* Green always-on badge — not a toggle */}
             <View style={[styles.alwaysOnBadge, { backgroundColor: darkMode ? '#1a2a1a' : '#e8f5e9' }]}>
               <Text style={[styles.alwaysOnText, { fontSize: 10 * fontSize }]}>ON</Text>
             </View>
@@ -159,14 +165,14 @@ export default function ControlsScreen() {
           <RowToggle
             icon="moon-outline"
             label="Shake in Background"
-            sublabel="Trigger SOS even when using other apps or screen is off"
+            sublabel="Uses a native service to detect shake even when using other apps. Shows a status bar notification while active."
             value={shakeInBackground}
             onValueChange={setShakeInBackground}
             last
           />
         </SectionCard>
 
-        {/* ── Display ────────────────────────────────────────────────────── */}
+        {/* Display */}
         <SectionCard title="DISPLAY">
           <RowToggle
             icon="color-palette-outline"
@@ -188,7 +194,7 @@ export default function ControlsScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* ── Font size modal ─────────────────────────────────────────────── */}
+      {/* Font size modal */}
       <Modal visible={fontModal} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setFontModal(false)} activeOpacity={1}>
           <View style={[styles.modalCard, { backgroundColor: modalBg }]}>
@@ -225,7 +231,7 @@ export default function ControlsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* ── SOS size modal ──────────────────────────────────────────────── */}
+      {/* SOS size modal */}
       <Modal visible={sosModal} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setSosModal(false)} activeOpacity={1}>
           <View style={[styles.modalCard, { backgroundColor: modalBg }]}>
@@ -236,11 +242,11 @@ export default function ControlsScreen() {
               <View style={[
                 styles.previewCircle,
                 {
-                  width: previewSosSize * 0.45,
-                  height: previewSosSize * 0.45,
+                  width:        previewSosSize * 0.45,
+                  height:       previewSosSize * 0.45,
                   borderRadius: previewSosSize * 0.225,
                   backgroundColor: sosColor,
-                  shadowColor: sosColor,
+                  shadowColor:  sosColor,
                 },
               ]}>
                 <Text style={[styles.previewText, { fontSize: previewSosSize * 0.08 }]}>SOS</Text>
@@ -276,72 +282,30 @@ export default function ControlsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scroll: { paddingHorizontal: 20 },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginTop: 60, marginBottom: 28,
-  },
-  headerTitle: { fontWeight: '700' },
-  section: { marginBottom: 24 },
+  container:    { flex: 1 },
+  scroll:       { paddingHorizontal: 20 },
+  header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 60, marginBottom: 28 },
+  headerTitle:  { fontWeight: '700' },
+  section:      { marginBottom: 24 },
   sectionLabel: { fontWeight: '700', letterSpacing: 1, marginBottom: 8, marginLeft: 4 },
-  card: {
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06, shadowRadius: 8,
-    elevation: 2, overflow: 'hidden',
-  },
-  row: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14,
-  },
-  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
-  rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowLabel: { fontWeight: '500' },
-  rowSublabel: { marginTop: 2 },
-  rowValue: {},
-
-  // Always-on badge
-  alwaysOnBadge: {
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 8,
-  },
-  alwaysOnText: {
-    color: '#388E3C', fontWeight: '800', letterSpacing: 0.5,
-  },
-
-  // Modals
-  previewContainer: {
-    alignItems: 'center', paddingVertical: 20,
-    borderBottomWidth: 1, marginBottom: 4,
-  },
-  previewCircle: {
-    justifyContent: 'center', alignItems: 'center',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4, shadowRadius: 10, elevation: 8,
-  },
-  previewText: { color: '#fff', fontWeight: '800', letterSpacing: 2 },
-  fontPreviewText: {},
-  previewLabel: { fontSize: 11, marginTop: 10 },
-  modalOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  modalCard: {
-    borderRadius: 20, width: '80%', paddingVertical: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2, shadowRadius: 20, elevation: 10,
-  },
-  modalTitle: {
-    fontWeight: '700', color: '#aaa', letterSpacing: 1,
-    textAlign: 'center', paddingVertical: 12, borderBottomWidth: 1,
-  },
-  modalOption: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', paddingHorizontal: 20,
-    paddingVertical: 16, borderBottomWidth: 1,
-  },
-  modalOptionText: {},
-  checkmark: { fontSize: 16, color: '#d64045', fontWeight: '700' },
+  card:         { borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2, overflow: 'hidden' },
+  row:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
+  rowLeft:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  rowRight:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowLabel:     { fontWeight: '500' },
+  rowSublabel:  { marginTop: 2 },
+  rowValue:     {},
+  alwaysOnBadge:  { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  alwaysOnText:   { color: '#388E3C', fontWeight: '800', letterSpacing: 0.5 },
+  previewContainer: { alignItems: 'center', paddingVertical: 20, borderBottomWidth: 1, marginBottom: 4 },
+  previewCircle:    { justifyContent: 'center', alignItems: 'center', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 8 },
+  previewText:      { color: '#fff', fontWeight: '800', letterSpacing: 2 },
+  fontPreviewText:  {},
+  previewLabel:     { fontSize: 11, marginTop: 10 },
+  modalOverlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalCard:        { borderRadius: 20, width: '80%', paddingVertical: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 20, elevation: 10 },
+  modalTitle:       { fontWeight: '700', color: '#aaa', letterSpacing: 1, textAlign: 'center', paddingVertical: 12, borderBottomWidth: 1 },
+  modalOption:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
+  modalOptionText:  {},
+  checkmark:        { fontSize: 16, color: '#d64045', fontWeight: '700' },
 });

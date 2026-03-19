@@ -4,15 +4,18 @@ const { WifiDirectModule } = NativeModules;
 
 class WifiDirectService {
   constructor() {
-    this.devices = new Map();
-    this.connectedDevices = new Map();
-    this.listeners = [];
-    this.isDiscovering = false;
-    this.isConnected = false;
-    this.isInitialized = false;
-    this.eventEmitter = null;
+    this.devices            = new Map();
+    this.connectedDevices   = new Map();
+    this.listeners          = [];
+    this.isDiscovering      = false;
+    this.isConnected        = false;
+    this.isInitialized      = false;
+    this.eventEmitter       = null;
     this.eventSubscriptions = [];
-    this.pendingConnections = new Set(); // addresses currently being connected
+    this.pendingConnections = new Set();
+
+    // ✅ Set by ConnectionManager so it can react to hardware state changes
+    this.onStateChanged = null;
   }
 
   async initialize() {
@@ -28,27 +31,37 @@ class WifiDirectService {
     try {
       await WifiDirectModule.initialize();
       this.isInitialized = true;
-      this.eventEmitter = new NativeEventEmitter(WifiDirectModule);
+      this.eventEmitter  = new NativeEventEmitter(WifiDirectModule);
 
       this.eventSubscriptions = [
         this.eventEmitter.addListener('WifiDirectPeersFound', (peers) => {
           this._handlePeersFound(peers);
         }),
+
         this.eventEmitter.addListener('WifiDirectConnected', (info) => {
           this._handleConnected(info);
         }),
+
         this.eventEmitter.addListener('WifiDirectDisconnected', () => {
           this._handleDisconnected();
         }),
+
+        // ── Wi-Fi Direct hardware toggled on/off by the user ─────────────────
         this.eventEmitter.addListener('WifiDirectStateChanged', (enabled) => {
-          console.log('📶 WiFi Direct:', enabled ? 'ON' : 'OFF');
+          console.log('📶 WiFi Direct state:', enabled ? 'ON' : 'OFF');
+
           if (!enabled) {
             this.devices.clear();
             this.connectedDevices.clear();
             this.pendingConnections.clear();
             this.isDiscovering = false;
-            this.isConnected = false;
+            this.isConnected   = false;
             this.notifyListeners();
+          }
+
+          // ✅ Tell ConnectionManager so it updates its flag and the UI banner
+          if (this.onStateChanged) {
+            this.onStateChanged(enabled);
           }
         }),
       ];
@@ -62,11 +75,11 @@ class WifiDirectService {
   }
 
   _handlePeersFound(peers) {
-    console.log(`📶 WiFi Direct peers: ${peers.length}`);
+    console.log(`📶 WiFi Direct peers found: ${peers.length}`);
 
     const currentAddresses = new Set(peers.map(p => p.deviceAddress));
 
-    // Remove devices no longer in the peer list (unless connected)
+    // Remove gone peers (keep connected ones)
     for (const [address] of this.devices.entries()) {
       if (!currentAddresses.has(address) && !this.connectedDevices.has(address)) {
         this.devices.delete(address);
@@ -74,20 +87,19 @@ class WifiDirectService {
     }
 
     peers.forEach(peer => {
-      const isConnected = peer.status === 0;   // WifiP2pDevice.CONNECTED
-      const isAvailable = peer.status === 3;   // WifiP2pDevice.AVAILABLE
-      const isInvited = peer.status === 1;     // WifiP2pDevice.INVITED (connecting)
+      const isConnected = peer.status === 0; // WifiP2pDevice.CONNECTED
+      const isAvailable = peer.status === 3; // WifiP2pDevice.AVAILABLE
 
       const deviceInfo = {
-        id: peer.deviceAddress,
-        name: peer.deviceName || `P2P_${peer.deviceAddress.slice(-5)}`,
-        address: peer.deviceAddress,
+        id:         peer.deviceAddress,
+        name:       peer.deviceName || `P2P_${peer.deviceAddress.slice(-5)}`,
+        address:    peer.deviceAddress,
         peerStatus: peer.status,
-        isConnected: isConnected,
-        transport: 'wifi-direct',
-        rssi: -65,
-        distance: 20,
-        lastSeen: Date.now(),
+        isConnected,
+        transport:  'wifi-direct',
+        rssi:       -65,
+        distance:   20,
+        lastSeen:   Date.now(),
       };
 
       this.devices.set(peer.deviceAddress, deviceInfo);
@@ -97,7 +109,7 @@ class WifiDirectService {
         this.pendingConnections.delete(peer.deviceAddress);
       }
 
-      // Auto-connect to available peers that we're not already connecting to
+      // Auto-connect to available peers not already in progress
       if (
         isAvailable &&
         !this.connectedDevices.has(peer.deviceAddress) &&
@@ -114,7 +126,6 @@ class WifiDirectService {
     console.log('✅ WiFi Direct group formed:', info);
     this.isConnected = true;
 
-    // Request fresh peer list to get updated statuses
     WifiDirectModule.requestPeers()
       .then(peers => {
         peers.forEach(peer => {
@@ -130,7 +141,7 @@ class WifiDirectService {
         this.notifyListeners();
       })
       .catch(() => {
-        // Fallback — mark all known peers with peerStatus 0 as connected
+        // Fallback — mark all status-0 peers as connected
         for (const [address, device] of this.devices.entries()) {
           if (device.peerStatus === 0) {
             const updated = { ...device, isConnected: true };
@@ -165,7 +176,7 @@ class WifiDirectService {
       await WifiDirectModule.connectToDevice(deviceAddress);
       console.log(`✅ WiFi Direct connection initiated: ${deviceAddress}`);
     } catch (error) {
-      console.error(`❌ WiFi Direct connect failed:`, error);
+      console.error('❌ WiFi Direct connect failed:', error);
       this.pendingConnections.delete(deviceAddress);
     }
   }
@@ -200,21 +211,23 @@ class WifiDirectService {
     this.pendingConnections.clear();
   }
 
-  getDevices() { return Array.from(this.devices.values()); }
+  getDevices() {
+    return Array.from(this.devices.values());
+  }
 
   getStats() {
     return {
-      totalDevices: this.devices.size,
+      totalDevices:     this.devices.size,
       connectedDevices: this.connectedDevices.size,
-      isDiscovering: this.isDiscovering,
-      isConnected: this.isConnected,
-      isInitialized: this.isInitialized,
+      isDiscovering:    this.isDiscovering,
+      isConnected:      this.isConnected,
+      isInitialized:    this.isInitialized,
     };
   }
 
-  addListener(callback) { this.listeners.push(callback); }
+  addListener(callback)    { this.listeners.push(callback); }
   removeListener(callback) { this.listeners = this.listeners.filter(cb => cb !== callback); }
-  notifyListeners() { this.listeners.forEach(cb => cb(this.getDevices())); }
+  notifyListeners()        { this.listeners.forEach(cb => cb(this.getDevices())); }
 
   cleanup() {
     this.stopDiscovery();
@@ -224,8 +237,9 @@ class WifiDirectService {
     this.devices.clear();
     this.connectedDevices.clear();
     this.pendingConnections.clear();
-    this.listeners = [];
-    this.isInitialized = false;
+    this.listeners      = [];
+    this.isInitialized  = false;
+    this.onStateChanged = null;
   }
 }
 

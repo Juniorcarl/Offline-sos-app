@@ -9,7 +9,7 @@ const DEFAULTS = {
   sosSize: 220,
   reduceMotion: false,
   colorBlindMode: false,
-  shakeInBackground: false, // shake to SOS is always on; this controls background behaviour
+  shakeInBackground: false, // shake-to-SOS is always ON; this controls background-only behaviour
   darkMode: false,
   role: 'User',
   alertSound: true,
@@ -21,29 +21,28 @@ const DEFAULTS = {
 };
 
 export function UserProvider({ children }) {
-  const [name, setNameState] = useState(DEFAULTS.name);
-  const [fontSize, setFontSizeState] = useState(DEFAULTS.fontSize);
-  const [sosSize, setSosSizeState] = useState(DEFAULTS.sosSize);
-  const [reduceMotion, setReduceMotionState] = useState(DEFAULTS.reduceMotion);
-  const [colorBlindMode, setColorBlindModeState] = useState(DEFAULTS.colorBlindMode);
+  const [name,              setNameState]              = useState(DEFAULTS.name);
+  const [fontSize,          setFontSizeState]          = useState(DEFAULTS.fontSize);
+  const [sosSize,           setSosSizeState]           = useState(DEFAULTS.sosSize);
+  const [reduceMotion,      setReduceMotionState]      = useState(DEFAULTS.reduceMotion);
+  const [colorBlindMode,    setColorBlindModeState]    = useState(DEFAULTS.colorBlindMode);
   const [shakeInBackground, setShakeInBackgroundState] = useState(DEFAULTS.shakeInBackground);
-  const [darkMode, setDarkModeState] = useState(DEFAULTS.darkMode);
-  const [role, setRoleState] = useState(DEFAULTS.role);
-  const [alertSound, setAlertSoundState] = useState(DEFAULTS.alertSound);
-  const [alertVibration, setAlertVibrationState] = useState(DEFAULTS.alertVibration);
-  const [alertFlashlight, setAlertFlashlightState] = useState(DEFAULTS.alertFlashlight);
-  const [alertRepeat, setAlertRepeatState] = useState(DEFAULTS.alertRepeat);
-  const [alertVolume, setAlertVolumeState] = useState(DEFAULTS.alertVolume);
-  const [alertSoundId, setAlertSoundIdState] = useState(DEFAULTS.alertSoundId);
-  const [loaded, setLoaded] = useState(false);
+  const [darkMode,          setDarkModeState]          = useState(DEFAULTS.darkMode);
+  const [role,              setRoleState]              = useState(DEFAULTS.role);
+  const [alertSound,        setAlertSoundState]        = useState(DEFAULTS.alertSound);
+  const [alertVibration,    setAlertVibrationState]    = useState(DEFAULTS.alertVibration);
+  const [alertFlashlight,   setAlertFlashlightState]   = useState(DEFAULTS.alertFlashlight);
+  const [alertRepeat,       setAlertRepeatState]       = useState(DEFAULTS.alertRepeat);
+  const [alertVolume,       setAlertVolumeState]       = useState(DEFAULTS.alertVolume);
+  const [alertSoundId,      setAlertSoundIdState]      = useState(DEFAULTS.alertSoundId);
+  const [loaded,            setLoaded]                 = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
       try {
         const keys = [
           'name', 'fontSize', 'sosSize', 'reduceMotion',
-          'colorBlindMode', 'shakeInBackground', 'darkMode',
-          'role',
+          'colorBlindMode', 'shakeInBackground', 'darkMode', 'role',
           'alertSound', 'alertVibration', 'alertFlashlight',
           'alertRepeat', 'alertVolume', 'alertSoundId',
         ];
@@ -51,20 +50,20 @@ export function UserProvider({ children }) {
         pairs.forEach(([key, value]) => {
           if (value === null) return;
           const parsed = JSON.parse(value);
-          if (key === 'name') setNameState(parsed);
-          if (key === 'fontSize') setFontSizeState(parsed);
-          if (key === 'sosSize') setSosSizeState(parsed);
-          if (key === 'reduceMotion') setReduceMotionState(parsed);
-          if (key === 'colorBlindMode') setColorBlindModeState(parsed);
+          if (key === 'name')              setNameState(parsed);
+          if (key === 'fontSize')          setFontSizeState(parsed);
+          if (key === 'sosSize')           setSosSizeState(parsed);
+          if (key === 'reduceMotion')      setReduceMotionState(parsed);
+          if (key === 'colorBlindMode')    setColorBlindModeState(parsed);
           if (key === 'shakeInBackground') setShakeInBackgroundState(parsed);
-          if (key === 'darkMode') setDarkModeState(parsed);
-          if (key === 'role') setRoleState(parsed);
-          if (key === 'alertSound') setAlertSoundState(parsed);
-          if (key === 'alertVibration') setAlertVibrationState(parsed);
-          if (key === 'alertFlashlight') setAlertFlashlightState(parsed);
-          if (key === 'alertRepeat') setAlertRepeatState(parsed);
-          if (key === 'alertVolume') setAlertVolumeState(parsed);
-          if (key === 'alertSoundId') setAlertSoundIdState(parsed);
+          if (key === 'darkMode')          setDarkModeState(parsed);
+          if (key === 'role')              setRoleState(parsed);
+          if (key === 'alertSound')        setAlertSoundState(parsed);
+          if (key === 'alertVibration')    setAlertVibrationState(parsed);
+          if (key === 'alertFlashlight')   setAlertFlashlightState(parsed);
+          if (key === 'alertRepeat')       setAlertRepeatState(parsed);
+          if (key === 'alertVolume')       setAlertVolumeState(parsed);
+          if (key === 'alertSoundId')      setAlertSoundIdState(parsed);
         });
       } catch (e) {
         console.log('Failed to load settings:', e);
@@ -76,34 +75,30 @@ export function UserProvider({ children }) {
   }, []);
 
   const save = async (key, value) => {
-    try {
-      await AsyncStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-      console.log(`Failed to save ${key}:`, e);
-    }
+    try { await AsyncStorage.setItem(key, JSON.stringify(value)); }
+    catch (e) { console.log(`Failed to save ${key}:`, e); }
   };
 
-  const setName = (v) => { setNameState(v); save('name', v); };
-  const setFontSize = (v) => { setFontSizeState(v); save('fontSize', v); };
-  const setSosSize = (v) => { setSosSizeState(v); save('sosSize', v); };
-  const setReduceMotion = (v) => { setReduceMotionState(v); save('reduceMotion', v); };
-  const setColorBlindMode = (v) => { setColorBlindModeState(v); save('colorBlindMode', v); };
+  const setName              = (v) => { setNameState(v);              save('name', v); };
+  const setFontSize          = (v) => { setFontSizeState(v);          save('fontSize', v); };
+  const setSosSize           = (v) => { setSosSizeState(v);           save('sosSize', v); };
+  const setReduceMotion      = (v) => { setReduceMotionState(v);      save('reduceMotion', v); };
+  const setColorBlindMode    = (v) => { setColorBlindModeState(v);    save('colorBlindMode', v); };
   const setShakeInBackground = (v) => { setShakeInBackgroundState(v); save('shakeInBackground', v); };
-  const setDarkMode = (v) => { setDarkModeState(v); save('darkMode', v); };
-  const setRole = (v) => { setRoleState(v); save('role', v); };
-  const setAlertSound = (v) => { setAlertSoundState(v); save('alertSound', v); };
-  const setAlertVibration = (v) => { setAlertVibrationState(v); save('alertVibration', v); };
-  const setAlertFlashlight = (v) => { setAlertFlashlightState(v); save('alertFlashlight', v); };
-  const setAlertRepeat = (v) => { setAlertRepeatState(v); save('alertRepeat', v); };
-  const setAlertVolume = (v) => { setAlertVolumeState(v); save('alertVolume', v); };
-  const setAlertSoundId = (v) => { setAlertSoundIdState(v); save('alertSoundId', v); };
+  const setDarkMode          = (v) => { setDarkModeState(v);          save('darkMode', v); };
+  const setRole              = (v) => { setRoleState(v);              save('role', v); };
+  const setAlertSound        = (v) => { setAlertSoundState(v);        save('alertSound', v); };
+  const setAlertVibration    = (v) => { setAlertVibrationState(v);    save('alertVibration', v); };
+  const setAlertFlashlight   = (v) => { setAlertFlashlightState(v);   save('alertFlashlight', v); };
+  const setAlertRepeat       = (v) => { setAlertRepeatState(v);       save('alertRepeat', v); };
+  const setAlertVolume       = (v) => { setAlertVolumeState(v);       save('alertVolume', v); };
+  const setAlertSoundId      = (v) => { setAlertSoundIdState(v);      save('alertSoundId', v); };
 
   const clearAllData = async () => {
     try {
       await AsyncStorage.multiRemove([
         'name', 'fontSize', 'sosSize', 'reduceMotion',
-        'colorBlindMode', 'shakeInBackground', 'darkMode',
-        'role',
+        'colorBlindMode', 'shakeInBackground', 'darkMode', 'role',
         'alertSound', 'alertVibration', 'alertFlashlight',
         'alertRepeat', 'alertVolume', 'alertSoundId',
       ]);
@@ -130,20 +125,20 @@ export function UserProvider({ children }) {
 
   return (
     <UserContext.Provider value={{
-      name, setName,
-      fontSize, setFontSize,
-      sosSize, setSosSize,
-      reduceMotion, setReduceMotion,
-      colorBlindMode, setColorBlindMode,
+      name,              setName,
+      fontSize,          setFontSize,
+      sosSize,           setSosSize,
+      reduceMotion,      setReduceMotion,
+      colorBlindMode,    setColorBlindMode,
       shakeInBackground, setShakeInBackground,
-      darkMode, setDarkMode,
-      role, setRole,
-      alertSound, setAlertSound,
-      alertVibration, setAlertVibration,
-      alertFlashlight, setAlertFlashlight,
-      alertRepeat, setAlertRepeat,
-      alertVolume, setAlertVolume,
-      alertSoundId, setAlertSoundId,
+      darkMode,          setDarkMode,
+      role,              setRole,
+      alertSound,        setAlertSound,
+      alertVibration,    setAlertVibration,
+      alertFlashlight,   setAlertFlashlight,
+      alertRepeat,       setAlertRepeat,
+      alertVolume,       setAlertVolume,
+      alertSoundId,      setAlertSoundId,
       clearAllData,
     }}>
       {children}
