@@ -7,14 +7,16 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
-import HomeScreen from '../screens/user/HomeScreen';
-import MessagesScreen from '../screens/user/MessagesScreen';
-import SettingsScreen from '../screens/shared/SettingsScreen';
-import ProfileScreen from '../screens/shared/ProfileScreen';
-import ChatScreen from '../screens/shared/ChatScreen';
-import EmergencyAlertsScreen from '../screens/user/EmergencyAlertsScreen';
-import ControlsScreen from '../screens/user/ControlsScreen';
-import AboutScreen from '../screens/user/AboutScreen';
+import HomeScreen from '../screens/HomeScreen';
+import MessagesScreen from '../screens/MessagesScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import ChatScreen from '../screens/ChatScreen';
+import EmergencyAlertsScreen from '../screens/EmergencyAlertsScreen';
+import ControlsScreen from '../screens/ControlsScreen';
+import AboutScreen from '../screens/AboutScreen';
+import EmergencyMapScreen from '../screens/EmergencyMapScreen';
+import EmergencyMessageScreen from '../screens/EmergencyMessageScreen'; // ADD THIS
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -92,7 +94,11 @@ function CustomTabBar({ state, descriptors, navigation }) {
               activeOpacity={0.7}
               style={styles.tab}
             >
-              {!isFocused && <Icon active={false} />}
+              {isFocused ? (
+                <View style={{ width: 24, height: 24 }} />
+              ) : (
+                <Icon active={false} />
+              )}
             </TouchableOpacity>
           );
         })}
@@ -108,7 +114,6 @@ function CustomTabBar({ state, descriptors, navigation }) {
   );
 }
 
-// Your original tab navigator — unchanged
 function UserTabNavigator() {
   return (
     <Tab.Navigator
@@ -122,7 +127,6 @@ function UserTabNavigator() {
   );
 }
 
-// Stack wrapper so all user screens are reachable
 export default function BottomTabs() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -132,6 +136,8 @@ export default function BottomTabs() {
       <Stack.Screen name="EmergencyAlerts" component={EmergencyAlertsScreen} />
       <Stack.Screen name="Controls" component={ControlsScreen} />
       <Stack.Screen name="About" component={AboutScreen} />
+      <Stack.Screen name="EmergencyMap" component={EmergencyMapScreen} />
+      <Stack.Screen name="EmergencyMessage" component={EmergencyMessageScreen} />
     </Stack.Navigator>
   );
 }

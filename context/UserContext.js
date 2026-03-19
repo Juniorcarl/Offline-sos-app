@@ -9,10 +9,9 @@ const DEFAULTS = {
   sosSize: 220,
   reduceMotion: false,
   colorBlindMode: false,
-  shakeToSOS: false,
+  shakeInBackground: false, // shake to SOS is always on; this controls background behaviour
   darkMode: false,
   role: 'User',
-  authorityType: '',
   alertSound: true,
   alertVibration: true,
   alertFlashlight: true,
@@ -27,10 +26,9 @@ export function UserProvider({ children }) {
   const [sosSize, setSosSizeState] = useState(DEFAULTS.sosSize);
   const [reduceMotion, setReduceMotionState] = useState(DEFAULTS.reduceMotion);
   const [colorBlindMode, setColorBlindModeState] = useState(DEFAULTS.colorBlindMode);
-  const [shakeToSOS, setShakeToSOSState] = useState(DEFAULTS.shakeToSOS);
+  const [shakeInBackground, setShakeInBackgroundState] = useState(DEFAULTS.shakeInBackground);
   const [darkMode, setDarkModeState] = useState(DEFAULTS.darkMode);
   const [role, setRoleState] = useState(DEFAULTS.role);
-  const [authorityType, setAuthorityTypeState] = useState(DEFAULTS.authorityType);
   const [alertSound, setAlertSoundState] = useState(DEFAULTS.alertSound);
   const [alertVibration, setAlertVibrationState] = useState(DEFAULTS.alertVibration);
   const [alertFlashlight, setAlertFlashlightState] = useState(DEFAULTS.alertFlashlight);
@@ -44,8 +42,8 @@ export function UserProvider({ children }) {
       try {
         const keys = [
           'name', 'fontSize', 'sosSize', 'reduceMotion',
-          'colorBlindMode', 'shakeToSOS', 'darkMode',
-          'role', 'authorityType',
+          'colorBlindMode', 'shakeInBackground', 'darkMode',
+          'role',
           'alertSound', 'alertVibration', 'alertFlashlight',
           'alertRepeat', 'alertVolume', 'alertSoundId',
         ];
@@ -58,10 +56,9 @@ export function UserProvider({ children }) {
           if (key === 'sosSize') setSosSizeState(parsed);
           if (key === 'reduceMotion') setReduceMotionState(parsed);
           if (key === 'colorBlindMode') setColorBlindModeState(parsed);
-          if (key === 'shakeToSOS') setShakeToSOSState(parsed);
+          if (key === 'shakeInBackground') setShakeInBackgroundState(parsed);
           if (key === 'darkMode') setDarkModeState(parsed);
           if (key === 'role') setRoleState(parsed);
-          if (key === 'authorityType') setAuthorityTypeState(parsed);
           if (key === 'alertSound') setAlertSoundState(parsed);
           if (key === 'alertVibration') setAlertVibrationState(parsed);
           if (key === 'alertFlashlight') setAlertFlashlightState(parsed);
@@ -91,10 +88,9 @@ export function UserProvider({ children }) {
   const setSosSize = (v) => { setSosSizeState(v); save('sosSize', v); };
   const setReduceMotion = (v) => { setReduceMotionState(v); save('reduceMotion', v); };
   const setColorBlindMode = (v) => { setColorBlindModeState(v); save('colorBlindMode', v); };
-  const setShakeToSOS = (v) => { setShakeToSOSState(v); save('shakeToSOS', v); };
+  const setShakeInBackground = (v) => { setShakeInBackgroundState(v); save('shakeInBackground', v); };
   const setDarkMode = (v) => { setDarkModeState(v); save('darkMode', v); };
   const setRole = (v) => { setRoleState(v); save('role', v); };
-  const setAuthorityType = (v) => { setAuthorityTypeState(v); save('authorityType', v); };
   const setAlertSound = (v) => { setAlertSoundState(v); save('alertSound', v); };
   const setAlertVibration = (v) => { setAlertVibrationState(v); save('alertVibration', v); };
   const setAlertFlashlight = (v) => { setAlertFlashlightState(v); save('alertFlashlight', v); };
@@ -106,8 +102,8 @@ export function UserProvider({ children }) {
     try {
       await AsyncStorage.multiRemove([
         'name', 'fontSize', 'sosSize', 'reduceMotion',
-        'colorBlindMode', 'shakeToSOS', 'darkMode',
-        'role', 'authorityType',
+        'colorBlindMode', 'shakeInBackground', 'darkMode',
+        'role',
         'alertSound', 'alertVibration', 'alertFlashlight',
         'alertRepeat', 'alertVolume', 'alertSoundId',
       ]);
@@ -116,10 +112,9 @@ export function UserProvider({ children }) {
       setSosSizeState(DEFAULTS.sosSize);
       setReduceMotionState(DEFAULTS.reduceMotion);
       setColorBlindModeState(DEFAULTS.colorBlindMode);
-      setShakeToSOSState(DEFAULTS.shakeToSOS);
+      setShakeInBackgroundState(DEFAULTS.shakeInBackground);
       setDarkModeState(DEFAULTS.darkMode);
       setRoleState(DEFAULTS.role);
-      setAuthorityTypeState(DEFAULTS.authorityType);
       setAlertSoundState(DEFAULTS.alertSound);
       setAlertVibrationState(DEFAULTS.alertVibration);
       setAlertFlashlightState(DEFAULTS.alertFlashlight);
@@ -140,10 +135,9 @@ export function UserProvider({ children }) {
       sosSize, setSosSize,
       reduceMotion, setReduceMotion,
       colorBlindMode, setColorBlindMode,
-      shakeToSOS, setShakeToSOS,
+      shakeInBackground, setShakeInBackground,
       darkMode, setDarkMode,
       role, setRole,
-      authorityType, setAuthorityType,
       alertSound, setAlertSound,
       alertVibration, setAlertVibration,
       alertFlashlight, setAlertFlashlight,
