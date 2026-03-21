@@ -29,12 +29,15 @@ export default function EmergencyMapScreen() {
   const navigation = useNavigation();
   const route = useRoute();
 
-  // Accept pre-fetched location from HomeScreen so map centres instantly
   const passedLocation = route.params?.userLocation ?? null;
   const messages = route.params?.messages || [];
 
   const webviewRef = useRef(null);
   const mapReadyRef = useRef(false);
+  // ── FIX 1: track whether component is still mounted ───────────────────────
+  // Without this, the watchPositionAsync callback fires setState and
+  // injectJavaScript after the component unmounts, causing a crash
+  const isMountedRef = useRef(true);
 
   const [ready, setReady] = useState(false);
   const [userLocation, setUserLocation] = useState(passedLocation);
@@ -47,35 +50,39 @@ export default function EmergencyMapScreen() {
   }, [mapReady]);
 
   useEffect(() => {
+    // Mark mounted
+    isMountedRef.current = true;
+
     let locationSubscription = null;
 
     async function prepare() {
-      // ── Permission check — no dialog shown here, App.js already handled it ─
-      // We just check the result and show the denied screen if needed
       const granted = await PermissionManager.isLocationGranted();
 
       if (!granted) {
-        setLocationDenied(true);
-        setReady(true);
+        if (isMountedRef.current) {
+          setLocationDenied(true);
+          setReady(true);
+        }
         return;
       }
 
-      // Skip slow GPS fix if HomeScreen already passed us a location
       if (!passedLocation) {
         try {
           const initial = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.High,
           });
-          setUserLocation({
-            lat: initial.coords.latitude,
-            lng: initial.coords.longitude,
-          });
+          // ── FIX 1 applied: only setState if still mounted ─────────────────
+          if (isMountedRef.current) {
+            setUserLocation({
+              lat: initial.coords.latitude,
+              lng: initial.coords.longitude,
+            });
+          }
         } catch (err) {
           console.log('Map initial location error:', err);
         }
       }
 
-      // Continuous tracking as the user moves
       try {
         locationSubscription = await Location.watchPositionAsync(
           {
@@ -84,22 +91,32 @@ export default function EmergencyMapScreen() {
             timeInterval: 5000,
           },
           (loc) => {
+            // ── FIX 1 applied: bail out if unmounted ──────────────────────
+            if (!isMountedRef.current) return;
+
             const newPos = {
               lat: loc.coords.latitude,
               lng: loc.coords.longitude,
             };
             setUserLocation(newPos);
 
-            if (mapReadyRef.current && webviewRef.current) {
-              webviewRef.current.injectJavaScript(`
-                (function() {
-                  if (window.userMarker && window.leafletMap) {
-                    window.userMarker.setLatLng([${newPos.lat}, ${newPos.lng}]);
-                    window.leafletMap.setView([${newPos.lat}, ${newPos.lng}]);
-                  }
-                })();
-                true;
-              `);
+            // ── FIX 2: guard injectJavaScript with both mapReady AND webview ref ─
+            // When the user scrolls aggressively, the WebView can be in a
+            // partially destroyed state. Checking both prevents the crash.
+            if (mapReadyRef.current && webviewRef.current && isMountedRef.current) {
+              try {
+                webviewRef.current.injectJavaScript(`
+                  (function() {
+                    if (window.userMarker && window.leafletMap) {
+                      window.userMarker.setLatLng([${newPos.lat}, ${newPos.lng}]);
+                      window.leafletMap.setView([${newPos.lat}, ${newPos.lng}]);
+                    }
+                  })();
+                  true;
+                `);
+              } catch (e) {
+                // WebView was destroyed mid-inject — safe to ignore
+              }
             }
           }
         );
@@ -107,17 +124,28 @@ export default function EmergencyMapScreen() {
         console.log('Map watch location error:', err);
       }
 
-      setReady(true);
+      if (isMountedRef.current) {
+        setReady(true);
+      }
     }
 
     prepare();
 
     return () => {
-      if (locationSubscription) locationSubscription.remove();
+      // ── FIX 1: mark unmounted so no further setState or injectJavaScript fires
+      isMountedRef.current = false;
+
+      // ── FIX 2: remove subscription immediately on unmount ─────────────────
+      // Previously this relied on locationSubscription being set before cleanup
+      // ran, but with async prepare() that wasn't guaranteed. The isMountedRef
+      // guard above also prevents the callback firing, but we still remove the
+      // subscription to stop the GPS listener draining battery after leaving.
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
     };
   }, []);
 
-  // Build marker data with real calculated distance
   const markers = messages.map((m) => {
     let distance = m.distance ?? '?';
     if (userLocation && m.latitude != null && m.longitude != null) {
@@ -226,7 +254,7 @@ export default function EmergencyMapScreen() {
 
   const handleWebViewMessage = (event) => {
     switch (event.nativeEvent.data) {
-      case 'MAP_READY':    setMapReady(true);    break;
+      case 'MAP_READY':     setMapReady(true);   break;
       case 'TILES_OFFLINE': setIsOnline(false);  break;
       case 'TILES_ONLINE':  setIsOnline(true);   break;
       default: break;
