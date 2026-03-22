@@ -2,6 +2,7 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import bluetoothMeshService from './BluetoothMeshService';
 import wifiDirectService from './WifiDirectService';
+import messageService from './MessageService';
 
 /**
  * Pick the best display name from two device records.
@@ -79,6 +80,10 @@ class ConnectionManager {
     this.wifiDirectEnabled = wdReady;
     console.log('📶 WiFi Direct ready:', wdReady);
 
+    // ── Init MessageService with this manager + our device id ────────────────
+    messageService.init(this, bluetoothMeshService.deviceName);
+    console.log('💬 MessageService initialized with id:', bluetoothMeshService.deviceName);
+
     // Keep wifiDirectEnabled in sync when the user toggles Wi-Fi on/off
     wifiDirectService.onStateChanged = (enabled) => {
       console.log('📶 ConnectionManager: WiFi Direct state →', enabled);
@@ -100,15 +105,27 @@ class ConnectionManager {
     bluetoothMeshService.addListener(this._handleBluetoothDevices.bind(this));
     wifiDirectService.addListener(this._handleWifiDirectDevices.bind(this));
 
+    // ── Wire incoming mesh data into MessageService ───────────────────────────
+    bluetoothMeshService.addMessageListener(this._handleIncomingData.bind(this));
+    wifiDirectService.addMessageListener?.(this._handleIncomingData.bind(this));
+
     console.log('✅ ConnectionManager initialized');
+  }
+
+  // ── Incoming mesh data ─────────────────────────────────────────────────────
+
+  /**
+   * Called by BluetoothMeshService / WifiDirectService whenever raw data
+   * arrives from a peer. Hands it straight to MessageService for dedup + relay.
+   */
+  _handleIncomingData(rawData) {
+    messageService.handleIncoming(rawData);
   }
 
   // ── Device merge helpers ───────────────────────────────────────────────────
 
   /**
    * Called whenever BluetoothMeshService reports its current device list.
-   * Each BLE device always has a valid `name` (SOS_XXXXXX) because
-   * BluetoothMeshService only surfaces devices whose name starts with "SOS_".
    */
   _handleBluetoothDevices(devices) {
     const bleIds = new Set(devices.map(d => d.id));
@@ -124,26 +141,23 @@ class ConnectionManager {
       const existing = this.devices.get(device.id);
 
       if (existing && existing.transport === 'wifi-direct') {
-        // Already known via WiFi Direct — upgrade to 'both', keep best name
         this.devices.set(device.id, {
-          ...existing,           // keep WiFi Direct fields (address, peerStatus…)
-          ...device,             // overwrite with fresh BLE data (rssi, distance…)
+          ...existing,
+          ...device,
           name: bestName(device.name, existing.name),
           transport: 'both',
           wifiDirectConnected: existing.isConnected,
         });
       } else if (existing && existing.transport === 'both') {
-        // Already dual — refresh BLE fields, preserve WiFi Direct info
         this.devices.set(device.id, {
           ...existing,
-          rssi:     device.rssi,
-          distance: device.distance,
-          lastSeen: device.lastSeen,
-          name:     bestName(device.name, existing.name),
+          rssi:        device.rssi,
+          distance:    device.distance,
+          lastSeen:    device.lastSeen,
+          name:        bestName(device.name, existing.name),
           isConnected: device.isConnected || existing.wifiDirectConnected,
         });
       } else {
-        // Pure BLE entry
         this.devices.set(device.id, { ...device, transport: 'bluetooth' });
       }
     });
@@ -153,8 +167,6 @@ class ConnectionManager {
 
   /**
    * Called whenever WifiDirectService reports its current peer list.
-   * Peers carry the Android device's real name (e.g. "Samsung Galaxy A54")
-   * or a P2P_XXXXX fallback — always prefer the SOS_ BLE name when both exist.
    */
   _handleWifiDirectDevices(devices) {
     const wdIds = new Set(devices.map(d => d.id));
@@ -170,12 +182,9 @@ class ConnectionManager {
       const existing = this.devices.get(device.id);
 
       if (existing && existing.transport === 'bluetooth') {
-        // Already known via BLE — upgrade to 'both', keep best name
         this.devices.set(device.id, {
-          ...existing,           // keep BLE fields (rssi, distance, SOS_ name…)
+          ...existing,
           transport: 'both',
-          // Enrich: if WiFi Direct gave us the real Android device name, keep it
-          // alongside the SOS_ BLE name we already have
           name: bestName(existing.name, device.name),
           wifiDirectConnected: device.isConnected,
           isConnected: existing.isConnected || device.isConnected,
@@ -183,7 +192,6 @@ class ConnectionManager {
           peerStatus: device.peerStatus,
         });
       } else if (existing && existing.transport === 'both') {
-        // Already dual — refresh WiFi Direct fields only
         this.devices.set(device.id, {
           ...existing,
           wifiDirectConnected: device.isConnected,
@@ -193,7 +201,6 @@ class ConnectionManager {
           name: bestName(existing.name, device.name),
         });
       } else {
-        // Pure WiFi Direct entry
         this.devices.set(device.id, { ...device, transport: 'wifi-direct' });
       }
     });
@@ -273,7 +280,7 @@ class ConnectionManager {
         } else if (device.transport === 'both') {
           this.devices.set(id, {
             ...device,
-            transport: 'wifi-direct',
+            transport:   'wifi-direct',
             isConnected: device.wifiDirectConnected || false,
           });
         }
@@ -301,9 +308,17 @@ class ConnectionManager {
     }
   }
 
-  sendMessage(payload) {
-    bluetoothMeshService.sendMessage(payload);
-    wifiDirectService.sendMessage?.(payload);
+  /**
+   * Broadcast an encoded message payload to all connected peers.
+   * Called by MessageService when sending or relaying a packet.
+   */
+  sendMessage(encodedPayload) {
+    if (this.bluetoothEnabled) {
+      bluetoothMeshService.broadcastData(encodedPayload);
+    }
+    if (this.wifiDirectEnabled) {
+      wifiDirectService.broadcastData?.(encodedPayload);
+    }
   }
 
   addListener(callback)    { this.listeners.push(callback); }

@@ -16,7 +16,8 @@ import EmergencyAlertsScreen from '../screens/EmergencyAlertsScreen';
 import ControlsScreen from '../screens/ControlsScreen';
 import AboutScreen from '../screens/AboutScreen';
 import EmergencyMapScreen from '../screens/EmergencyMapScreen';
-import EmergencyMessageScreen from '../screens/EmergencyMessageScreen'; // ADD THIS
+import EmergencyMessageScreen from '../screens/EmergencyMessageScreen';
+import EmergencyAlertOverlay from '../components/EmergencyAlertOverlay';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -129,16 +130,19 @@ function UserTabNavigator() {
 
 export default function BottomTabs() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="UserMain" component={UserTabNavigator} />
-      <Stack.Screen name="Profile" component={ProfileScreen} />
-      <Stack.Screen name="Chat" component={ChatScreen} />
-      <Stack.Screen name="EmergencyAlerts" component={EmergencyAlertsScreen} />
-      <Stack.Screen name="Controls" component={ControlsScreen} />
-      <Stack.Screen name="About" component={AboutScreen} />
-      <Stack.Screen name="EmergencyMap" component={EmergencyMapScreen} />
-      <Stack.Screen name="EmergencyMessage" component={EmergencyMessageScreen} />
-    </Stack.Navigator>
+    <>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="UserMain" component={UserTabNavigator} />
+        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="Chat" component={ChatScreen} />
+        <Stack.Screen name="EmergencyAlerts" component={EmergencyAlertsScreen} />
+        <Stack.Screen name="Controls" component={ControlsScreen} />
+        <Stack.Screen name="About" component={AboutScreen} />
+        <Stack.Screen name="EmergencyMap" component={EmergencyMapScreen} />
+        <Stack.Screen name="EmergencyMessage" component={EmergencyMessageScreen} />
+      </Stack.Navigator>
+      <EmergencyAlertOverlay />
+    </>
   );
 }
 

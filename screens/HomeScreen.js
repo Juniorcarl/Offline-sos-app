@@ -43,7 +43,6 @@ export default function HomeScreen() {
   const [appState, setAppState]                       = useState(AppState.currentState);
   const [userLocation, setUserLocation]               = useState(null);
 
-  // Read notification status from PermissionManager — no need to request again
   const notifGranted = PermissionManager.getResults().notifications;
 
   const ring1    = useRef(new Animated.Value(1)).current;
@@ -53,9 +52,9 @@ export default function HomeScreen() {
   const opacity2 = useRef(new Animated.Value(0.3)).current;
   const opacity3 = useRef(new Animated.Value(0.15)).current;
 
-  const lastShake      = useRef(0);
-  const hasPrompted    = useRef(false);
-  const appStateRef    = useRef(AppState.currentState);
+  const lastShake       = useRef(0);
+  const hasPrompted     = useRef(false);
+  const appStateRef     = useRef(AppState.currentState);
   const userLocationRef = useRef(null);
 
   useEffect(() => { userLocationRef.current = userLocation; }, [userLocation]);
@@ -63,37 +62,28 @@ export default function HomeScreen() {
   const shakeInBackgroundRef = useRef(shakeInBackground);
   useEffect(() => { shakeInBackgroundRef.current = shakeInBackground; }, [shakeInBackground]);
 
-  const bg              = darkMode ? '#111'    : '#faf5f5';
-  const textColor       = darkMode ? '#fff'    : '#333';
-  const titleColor      = darkMode ? '#fff'    : '#1a1a1a';
-  const subColor        = darkMode ? '#888'    : '#888';
-  const shakeTagBg      = darkMode
+  const bg                = darkMode ? '#111'    : '#faf5f5';
+  const textColor         = darkMode ? '#fff'    : '#333';
+  const titleColor        = darkMode ? '#fff'    : '#1a1a1a';
+  const subColor          = darkMode ? '#888'    : '#888';
+  const shakeTagBg        = darkMode
     ? (colorBlindMode ? '#2a1e0a' : '#2a1010')
     : (colorBlindMode ? '#FFF3E0' : '#fff0f0');
-  const sosColor        = colorBlindMode ? '#E87722' : '#d64045';
-  const ringColor       = colorBlindMode ? '#E87722' : '#e8424a';
+  const sosColor          = colorBlindMode ? '#E87722' : '#d64045';
+  const ringColor         = colorBlindMode ? '#E87722' : '#e8424a';
   const devicesCountColor = colorBlindMode ? '#E87722' : '#d64045';
 
-  // ── Location — permissions already granted by App.js ─────────────────────
-  // We don't re-request here. Just start watching.
+  // ── Location ──────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       const granted = await PermissionManager.isLocationGranted();
       if (!granted) return;
-
       try {
-        // Get initial fix
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
       } catch (e) {
-        // getCurrentPositionAsync can fail if GPS is still warming up —
-        // watchPositionAsync will deliver the first fix when ready
         console.log('HomeScreen initial location error:', e);
       }
-
-      // Keep updating as user moves
       Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, distanceInterval: 20, timeInterval: 10000 },
         (l) => setUserLocation({ lat: l.coords.latitude, lng: l.coords.longitude })
@@ -146,26 +136,23 @@ export default function HomeScreen() {
     setWifiDirectEnabled(stats.wifiDirectEnabled);
   };
 
+  // ── Permissions already handled by PermissionManager in App.js ───────────
+  // We skip requestPermissions() here — just initialize and start scanning
   const initializeConnections = async () => {
-    // connectionManager.requestPermissions() handles Bluetooth permissions —
-    // location was already granted by App.js so this just checks BT
-    const hasPermissions = await connectionManager.requestPermissions();
-    if (!hasPermissions) {
-      Alert.alert(
-        'Bluetooth Permission Required',
-        'Please enable Bluetooth permission in Settings to use the mesh network.',
-        [{ text: 'Open Settings', onPress: () => Linking.openSettings() }, { text: 'Later', style: 'cancel' }]
-      );
-    }
     await connectionManager.initialize();
+
     let currentBT = false;
     if (BluetoothModule) {
-      try { currentBT = await BluetoothModule.isBluetoothEnabled(); setBluetoothEnabled(currentBT); }
-      catch (e) {}
+      try {
+        currentBT = await BluetoothModule.isBluetoothEnabled();
+        setBluetoothEnabled(currentBT);
+      } catch (e) {}
     }
+
     syncStats();
     connectionManager.addListener(handleDevicesUpdate);
     connectionManager.startScanning();
+
     if (!hasPrompted.current) {
       hasPrompted.current = true;
       setTimeout(() => {
@@ -177,14 +164,22 @@ export default function HomeScreen() {
 
   const checkAndPromptConnectivity = (bluetooth, wifi, wifiDirect) => {
     if (!bluetooth) {
-      Alert.alert('🔵 Enable Bluetooth',
+      Alert.alert(
+        '🔵 Enable Bluetooth',
         'Bluetooth is required to create the emergency mesh network.',
-        [{ text: 'Later', style: 'cancel' }, { text: 'Enable Bluetooth', onPress: openBluetoothSettings }]
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Enable Bluetooth', onPress: openBluetoothSettings },
+        ]
       );
     } else if (!wifi && !wifiDirect) {
-      Alert.alert('📶 Enable WiFi',
+      Alert.alert(
+        '📶 Enable WiFi',
         'WiFi or WiFi Direct extends the range of your mesh network.',
-        [{ text: 'Later', style: 'cancel' }, { text: 'Open Settings', onPress: () => Linking.sendIntent('android.settings.WIFI_SETTINGS') }]
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.sendIntent('android.settings.WIFI_SETTINGS') },
+        ]
       );
     }
   };
@@ -195,12 +190,19 @@ export default function HomeScreen() {
       await BluetoothModule.enableBluetooth();
       const isEnabled = await BluetoothModule.isBluetoothEnabled();
       setBluetoothEnabled(isEnabled);
-      if (isEnabled) { connectionManager.setBluetoothEnabled(true); Alert.alert('✅ Success', 'Bluetooth is now enabled!'); }
+      if (isEnabled) {
+        connectionManager.setBluetoothEnabled(true);
+        Alert.alert('✅ Success', 'Bluetooth is now enabled!');
+      }
     } catch (error) {
-      Alert.alert('Enable Bluetooth', 'Please turn on Bluetooth in your device settings.', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Open Settings', onPress: async () => { try { await BluetoothModule.openBluetoothSettings(); } catch (e) {} } },
-      ]);
+      Alert.alert(
+        'Enable Bluetooth',
+        'Please turn on Bluetooth in your device settings.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: async () => { try { await BluetoothModule.openBluetoothSettings(); } catch (e) {} } },
+        ]
+      );
     }
   };
 
@@ -210,7 +212,7 @@ export default function HomeScreen() {
 
   const handleDevicesUpdate = (devices) => { setDeviceCount(devices.length); syncStats(); };
 
-  // ── Pulse animation ──────────────────────────────────────────────────────
+  // ── Pulse animation ───────────────────────────────────────────────────────
   useEffect(() => {
     if (reduceMotion) return;
     const pulse = (scale, opacity, delay) =>
@@ -232,24 +234,24 @@ export default function HomeScreen() {
     return () => { a1.stop(); a2.stop(); a3.stop(); };
   }, [reduceMotion]);
 
-  // ── Core SOS send — sends to BOTH authority and nearby users ─────────────
+  // ── Core SOS send ─────────────────────────────────────────────────────────
   const autoSendSOS = useCallback(() => {
     Vibration.vibrate([0, 300, 100, 300, 100, 300]);
     const loc = userLocationRef.current;
 
     connectionManager.sendMessage({
-      message: DEFAULT_SOS_MESSAGE,
-      target: 'authority',
+      message:   DEFAULT_SOS_MESSAGE,
+      target:    'authority',
       timestamp: Date.now(),
-      latitude: loc?.lat ?? null,
+      latitude:  loc?.lat ?? null,
       longitude: loc?.lng ?? null,
     });
 
     connectionManager.sendMessage({
-      message: DEFAULT_SOS_MESSAGE,
-      target: 'local',
+      message:   DEFAULT_SOS_MESSAGE,
+      target:    'local',
       timestamp: Date.now(),
-      latitude: loc?.lat ?? null,
+      latitude:  loc?.lat ?? null,
       longitude: loc?.lng ?? null,
     });
 
@@ -261,17 +263,17 @@ export default function HomeScreen() {
           {
             text: 'View on Map',
             onPress: () => navigation.navigate('EmergencyMap', {
-              userLocation: userLocationRef.current,   // ← passes location so map loads instantly
+              userLocation: userLocationRef.current,
               messages: [{
-                id: Date.now().toString(),
-                name: 'You',
-                message: DEFAULT_SOS_MESSAGE,
-                distance: '0m',
-                time: 'Just now',
-                hops: 0,
-                signal: 5,
+                id:        Date.now().toString(),
+                name:      'You',
+                message:   DEFAULT_SOS_MESSAGE,
+                distance:  '0m',
+                time:      'Just now',
+                hops:      0,
+                signal:    5,
                 delivered: true,
-                latitude: loc?.lat ?? -22.5763,
+                latitude:  loc?.lat ?? -22.5763,
                 longitude: loc?.lng ?? 27.1322,
               }],
             }),
@@ -291,7 +293,7 @@ export default function HomeScreen() {
     return () => subscription.remove();
   }, [autoSendSOS]);
 
-  // ── FOREGROUND shake ──────────────────────────────────────────────────────
+  // ── Foreground shake ──────────────────────────────────────────────────────
   useEffect(() => {
     Accelerometer.setUpdateInterval(200);
     const subscription = Accelerometer.addListener(({ x, y, z }) => {
@@ -306,7 +308,7 @@ export default function HomeScreen() {
     return () => subscription.remove();
   }, [autoSendSOS]);
 
-  // ── BACKGROUND shake ─────────────────────────────────────────────────────
+  // ── Background shake ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!ShakeModule || !shakeEmitter) return;
     let subscription = null;
@@ -325,7 +327,7 @@ export default function HomeScreen() {
     return () => { if (subscription) subscription.remove(); };
   }, [shakeInBackground, autoSendSOS]);
 
-  const meshLimited = !bluetoothEnabled || (!wifiEnabled && !wifiDirectEnabled);
+  const meshLimited    = !bluetoothEnabled || (!wifiEnabled && !wifiDirectEnabled);
   const showNotifBanner = shakeInBackground && !notifGranted;
 
   return (
@@ -373,7 +375,6 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Notification permission banner */}
       {showNotifBanner && (
         <TouchableOpacity
           onPress={() => Linking.openSettings()}
@@ -387,7 +388,6 @@ export default function HomeScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Mesh limited warning */}
       {meshLimited && (
         <TouchableOpacity
           onPress={() => checkAndPromptConnectivity(bluetoothEnabled, wifiEnabled, wifiDirectEnabled)}

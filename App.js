@@ -1,14 +1,18 @@
-
 import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { UserProvider } from './context/UserContext';
 import PermissionManager from './services/PermissionManager';
 import BottomTabs from './navigation/BottomTabs';
+import notificationService from './services/NotificationService';
 
 export default function App() {
 
   const [permissionsReady, setPermissionsReady] = useState(false);
+
+  useEffect(() => {
+    notificationService.requestPermissions();
+  }, []);
 
   useEffect(() => {
     async function init() {
@@ -18,7 +22,6 @@ export default function App() {
     init();
   }, []);
 
-  // Show a minimal splash while permissions are being requested
   if (!permissionsReady) {
     return (
       <View style={styles.splash}>

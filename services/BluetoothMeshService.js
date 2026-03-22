@@ -1,11 +1,11 @@
 import { BleManager } from 'react-native-ble-plx';
 import BLEAdvertiser from 'react-native-ble-advertiser';
-import { PermissionsAndroid, Platform, NativeModules, NativeEventEmitter } from 'react-native';
+import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
 
-const SERVICE_UUID = '0000FFF0-0000-1000-8000-00805F9B34FB';
+const SERVICE_UUID        = '0000FFF0-0000-1000-8000-00805F9B34FB';
 const CHARACTERISTIC_UUID = '0000FFF1-0000-1000-8000-00805F9B34FB';
-const COMPANY_ID = 0x00E0;
-const STALE_THRESHOLD = 20000;   // remove device after 20s of no signal
+const COMPANY_ID          = 0x00E0;
+const STALE_THRESHOLD     = 20000;
 const STALE_CHECK_INTERVAL = 5000;
 const READVERTISE_INTERVAL = 10000;
 
@@ -13,62 +13,31 @@ const { BluetoothModule } = NativeModules;
 
 class BluetoothMeshService {
   constructor() {
-    this.manager = new BleManager();
-    this.devices = new Map();           // discovered devices (id -> deviceInfo)
-    this.connectedDevices = new Map();  // gatt-connected devices (id -> BleDevice)
-    this.listeners = [];
-    this.isScanning = false;
-    this.isAdvertising = false;
-    this.isBluetoothOn = false;
-    this.gattServerRunning = false;
-    this.deviceName = `SOS_${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-    this.stateSubscription = null;
+    this.manager            = new BleManager();
+    this.devices            = new Map();
+    this.connectedDevices   = new Map();
+    this.listeners          = [];
+    this.messageListeners   = [];
+    this.isScanning         = false;
+    this.isAdvertising      = false;
+    this.isBluetoothOn      = false;
+    this.gattServerRunning  = false;
+    this.deviceName         = `SOS_${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+    this.stateSubscription  = null;
     this.staleCheckInterval = null;
     this.readvertiseInterval = null;
     this.nativeEventEmitter = null;
-    this.gattSubscriptions = [];
+    this.gattSubscriptions  = [];
   }
 
-  async requestPermissions() {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        ]);
-
-        return (
-          granted['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED &&
-          granted['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED &&
-          granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED &&
-          granted['android.permission.BLUETOOTH_ADVERTISE'] === PermissionsAndroid.RESULTS.GRANTED
-        );
-      } catch (err) {
-        console.error('Permission error:', err);
-        return false;
-      }
-    }
-    return true;
-  }
-
+  // ── initialize — permissions already granted by PermissionManager ─────────
   async initialize() {
-    const hasPermissions = await this.requestPermissions();
-    if (!hasPermissions) {
-      console.error('❌ Bluetooth permissions not granted');
-      return false;
-    }
-
-    // Listen for native GATT events (device connected/disconnected to our server)
     if (BluetoothModule) {
       this.nativeEventEmitter = new NativeEventEmitter(BluetoothModule);
 
       const connSub = this.nativeEventEmitter.addListener(
         'GattDeviceConnected',
         (address) => {
-          console.log('🔗 GATT client connected to our server:', address);
-          // Find the device in our map by address and mark as connected
           for (const [id, device] of this.devices.entries()) {
             if (id === address || device.id === address) {
               const updated = { ...device, isConnected: true };
@@ -84,7 +53,6 @@ class BluetoothMeshService {
       const disconnSub = this.nativeEventEmitter.addListener(
         'GattDeviceDisconnected',
         (address) => {
-          console.log('📴 GATT client disconnected from our server:', address);
           for (const [id, device] of this.devices.entries()) {
             if (id === address || device.id === address) {
               const updated = { ...device, isConnected: false };
@@ -97,10 +65,22 @@ class BluetoothMeshService {
         }
       );
 
-      this.gattSubscriptions = [connSub, disconnSub];
+      // ── Wire incoming BLE data into MessageService ──────────────────────
+      const msgSub = this.nativeEventEmitter.addListener(
+        'GattMessageReceived',
+        (data) => {
+          try {
+            const raw = atob(data.value);
+            this.notifyMessageListeners(raw);
+          } catch (e) {
+            console.error('BLE message decode error:', e);
+          }
+        }
+      );
+
+      this.gattSubscriptions = [connSub, disconnSub, msgSub];
     }
 
-    // Watch BT state changes
     this.stateSubscription = this.manager.onStateChange((state) => {
       console.log('📱 BT state:', state);
       if (state === 'PoweredOn') {
@@ -118,25 +98,22 @@ class BluetoothMeshService {
       return true;
     }
 
-    console.log('⚠️ Bluetooth off — waiting');
+    console.log('⚠️ Bluetooth off — waiting for user to enable');
     return false;
   }
 
   async _onBluetoothOn() {
-    // Start GATT server so other phones can connect to us
     await this._startGattServer();
-    // Start advertising so other phones can discover us
     await this.startAdvertising();
-    // Start scanning so we can discover other phones
     this.startScanning();
     this._startStaleCheck();
   }
 
   _onBluetoothOff() {
-    this.isBluetoothOn = false;
-    this.isScanning = false;
-    this.isAdvertising = false;
-    this.gattServerRunning = false;
+    this.isBluetoothOn      = false;
+    this.isScanning         = false;
+    this.isAdvertising      = false;
+    this.gattServerRunning  = false;
     this._stopStaleCheck();
     this._stopReadvertise();
     this.devices.clear();
@@ -167,23 +144,16 @@ class BluetoothMeshService {
 
   async startAdvertising() {
     if (!this.isBluetoothOn || this.isAdvertising) return;
-
     try {
       console.log('📡 Advertising as:', this.deviceName);
       BLEAdvertiser.setCompanyId(COMPANY_ID);
-
-      await BLEAdvertiser.broadcast(
-        SERVICE_UUID,
-        [],
-        {
-          advertiseMode: 2,         // LOW_LATENCY
-          txPowerLevel: 3,          // HIGH
-          connectable: true,        // must be true for GATT connection
-          includeDeviceName: true,  // so scanner sees SOS_XXXXXX
-          includeTxPowerLevel: false,
-        }
-      );
-
+      await BLEAdvertiser.broadcast(SERVICE_UUID, [], {
+        advertiseMode:        2,
+        txPowerLevel:         3,
+        connectable:          true,
+        includeDeviceName:    true,
+        includeTxPowerLevel:  false,
+      });
       this.isAdvertising = true;
       console.log('✅ Advertising started');
       this._startReadvertise();
@@ -197,11 +167,7 @@ class BluetoothMeshService {
     this._stopReadvertise();
     if (!this.isAdvertising) return;
     if (!this.isBluetoothOn) { this.isAdvertising = false; return; }
-    try {
-      await BLEAdvertiser.stopBroadcast();
-    } catch (e) {
-      console.error('❌ Stop advertising error:', e);
-    }
+    try { await BLEAdvertiser.stopBroadcast(); } catch (e) {}
     this.isAdvertising = false;
   }
 
@@ -214,7 +180,7 @@ class BluetoothMeshService {
         this.isAdvertising = false;
         await new Promise(r => setTimeout(r, 500));
         await this.startAdvertising();
-      } catch (e) { /* retry next interval */ }
+      } catch (e) {}
     }, READVERTISE_INTERVAL);
   }
 
@@ -227,29 +193,21 @@ class BluetoothMeshService {
 
   startScanning() {
     if (!this.isBluetoothOn || this.isScanning) return;
-
     console.log('🔍 Scanning for SOS devices...');
     this.isScanning = true;
-
-    this.manager.startDeviceScan(
-      null,
-      { allowDuplicates: true },
-      (error, device) => {
-        if (error) {
-          console.error('❌ Scan error:', error);
-          this.isScanning = false;
-          // Auto-restart after error
-          setTimeout(() => {
-            if (this.isBluetoothOn) { this.isScanning = false; this.startScanning(); }
-          }, 3000);
-          return;
-        }
-
-        if (device && device.name && device.name.startsWith('SOS_')) {
-          this._handleDeviceFound(device);
-        }
+    this.manager.startDeviceScan(null, { allowDuplicates: true }, (error, device) => {
+      if (error) {
+        console.error('❌ Scan error:', error);
+        this.isScanning = false;
+        setTimeout(() => {
+          if (this.isBluetoothOn) { this.isScanning = false; this.startScanning(); }
+        }, 3000);
+        return;
       }
-    );
+      if (device && device.name && device.name.startsWith('SOS_')) {
+        this._handleDeviceFound(device);
+      }
+    });
   }
 
   stopScanning() {
@@ -259,29 +217,28 @@ class BluetoothMeshService {
   }
 
   async _handleDeviceFound(device) {
-    const rssi = device.rssi || -100;
-    const distance = this._calculateDistance(rssi);
-    const alreadyKnown = this.devices.has(device.id);
+    const rssi          = device.rssi || -100;
+    const distance      = this._calculateDistance(rssi);
+    const alreadyKnown  = this.devices.has(device.id);
     const alreadyConnected = this.connectedDevices.has(device.id);
 
     const deviceInfo = {
-      id: device.id,
-      name: device.name,
+      id:          device.id,
+      name:        device.name,
       rssi,
-      distance: Math.round(distance),
-      lastSeen: Date.now(),
+      distance:    Math.round(distance),
+      lastSeen:    Date.now(),
       isConnected: alreadyConnected,
-      transport: 'bluetooth',
+      transport:   'bluetooth',
     };
 
     const existing = this.devices.get(device.id);
-    const changed = !existing || existing.rssi !== rssi;
+    const changed  = !existing || existing.rssi !== rssi;
 
     this.devices.set(device.id, deviceInfo);
 
     if (!alreadyKnown) {
       console.log(`📱 Found: ${device.name} (~${deviceInfo.distance}m)`);
-      // Attempt GATT connection to the newly found device
       this._connectToDevice(device.id);
     }
 
@@ -291,23 +248,13 @@ class BluetoothMeshService {
   async _connectToDevice(deviceId) {
     if (!this.isBluetoothOn) return;
     if (this.connectedDevices.has(deviceId)) return;
-
     try {
       console.log(`🔗 Connecting to ${deviceId}...`);
-
-      const device = await this.manager.connectToDevice(deviceId, {
-        autoConnect: false,
-        requestMTU: 256,
-      });
-
+      const device = await this.manager.connectToDevice(deviceId, { autoConnect: false, requestMTU: 256 });
       await device.discoverAllServicesAndCharacteristics();
 
-      // Verify our SOS service exists on the remote device
       const services = await device.services();
-      const hasSosService = services.some(
-        s => s.uuid.toLowerCase() === SERVICE_UUID.toLowerCase()
-      );
-
+      const hasSosService = services.some(s => s.uuid.toLowerCase() === SERVICE_UUID.toLowerCase());
       if (!hasSosService) {
         console.log(`⚠️ ${deviceId} has no SOS service — disconnecting`);
         await this.manager.cancelDeviceConnection(deviceId);
@@ -315,16 +262,13 @@ class BluetoothMeshService {
       }
 
       this.connectedDevices.set(deviceId, device);
-
       const deviceInfo = this.devices.get(deviceId);
       if (deviceInfo) {
         this.devices.set(deviceId, { ...deviceInfo, isConnected: true });
         this.notifyListeners();
       }
-
       console.log(`✅ Connected to ${device.name || deviceId}`);
 
-      // Watch for disconnection
       this.manager.onDeviceDisconnected(deviceId, () => {
         console.log(`📴 Disconnected: ${deviceId}`);
         this.connectedDevices.delete(deviceId);
@@ -333,7 +277,6 @@ class BluetoothMeshService {
           this.devices.set(deviceId, { ...info, isConnected: false });
           this.notifyListeners();
         }
-        // Try to reconnect after a short delay
         setTimeout(() => {
           if (this.isBluetoothOn && this.devices.has(deviceId)) {
             this._connectToDevice(deviceId);
@@ -343,13 +286,28 @@ class BluetoothMeshService {
 
     } catch (error) {
       console.error(`❌ Connect failed to ${deviceId}:`, error.message);
-      // Retry after delay if device is still visible
       setTimeout(() => {
         if (this.isBluetoothOn && this.devices.has(deviceId) && !this.connectedDevices.has(deviceId)) {
           this._connectToDevice(deviceId);
         }
       }, 6000);
     }
+  }
+
+  // ── Broadcast data to all connected GATT peers ───────────────────────────
+  broadcastData(encodedPayload) {
+    this.connectedDevices.forEach(async (device, id) => {
+      try {
+        await this.manager.writeCharacteristicWithoutResponseForDevice(
+          id,
+          SERVICE_UUID,
+          CHARACTERISTIC_UUID,
+          btoa(encodedPayload),
+        );
+      } catch (e) {
+        console.error(`❌ BLE write to ${id} failed:`, e.message);
+      }
+    });
   }
 
   _startStaleCheck() {
@@ -379,25 +337,30 @@ class BluetoothMeshService {
     return Math.pow(10, (-59 - rssi) / 20);
   }
 
-  getDevices() {
-    return Array.from(this.devices.values());
-  }
+  getDevices() { return Array.from(this.devices.values()); }
 
   getStats() {
     return {
-      totalDevices: this.devices.size,
+      totalDevices:     this.devices.size,
       connectedDevices: this.connectedDevices.size,
-      isScanning: this.isScanning,
-      isAdvertising: this.isAdvertising,
-      deviceName: this.deviceName,
+      isScanning:       this.isScanning,
+      isAdvertising:    this.isAdvertising,
+      deviceName:       this.deviceName,
     };
   }
 
-  addListener(callback) { this.listeners.push(callback); }
-  removeListener(callback) { this.listeners = this.listeners.filter(cb => cb !== callback); }
+  addListener(cb)           { this.listeners.push(cb); }
+  removeListener(cb)        { this.listeners = this.listeners.filter(l => l !== cb); }
+  addMessageListener(cb)    { this.messageListeners.push(cb); }
+  removeMessageListener(cb) { this.messageListeners = this.messageListeners.filter(l => l !== cb); }
+
   notifyListeners() {
     const devices = this.getDevices();
     this.listeners.forEach(cb => cb(devices));
+  }
+
+  notifyMessageListeners(raw) {
+    this.messageListeners.forEach(cb => cb(raw));
   }
 
   cleanup() {
@@ -410,7 +373,8 @@ class BluetoothMeshService {
     if (this.stateSubscription) { this.stateSubscription.remove(); this.stateSubscription = null; }
     this.devices.clear();
     this.connectedDevices.clear();
-    this.listeners = [];
+    this.listeners        = [];
+    this.messageListeners = [];
   }
 }
 
