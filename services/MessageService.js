@@ -47,11 +47,19 @@ class MessageService {
    * @param {'local'|'authority'} target
    */
   async sendSOS(message, target = 'local') {
+    console.log('════════════════════════════════');
+    console.log('📤 [MessageService] sendSOS() CALLED');
+    console.log('📤   message:', message);
+    console.log('📤   target:', target);
+    console.log('📤   deviceId:', this.deviceId);
+    console.log('📤   connectionManager set?', this._connectionManager != null);
+
     let latitude  = null;
     let longitude = null;
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
+      console.log('📤   location permission status:', status);
       if (status === 'granted') {
         const loc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
@@ -59,8 +67,13 @@ class MessageService {
         });
         latitude  = loc.coords.latitude;
         longitude = loc.coords.longitude;
+        console.log('📤   location obtained:', latitude, longitude);
+      } else {
+        console.warn('📤   location permission not granted — sending without location');
       }
-    } catch (_) { /* location unavailable — send without it */ }
+    } catch (e) {
+      console.warn('📤   location error:', e.message, '— sending without location');
+    }
 
     const packet = createPacket({
       message,
@@ -70,13 +83,21 @@ class MessageService {
       target,
     });
 
-    // Mark as seen so we don't relay our own message back to ourselves
+    console.log('📤   packet created:', JSON.stringify(packet));
+    console.log('📤   packet.id:', packet.id);
+
     this._markSeen(packet.id);
+    console.log('📤   marked as seen (won\'t relay our own message back)');
 
     const encoded = encodePacket(packet);
-    this._connectionManager?.sendMessage(encoded);
+    console.log('📤   encoded packet length:', encoded.length, 'chars');
+    console.log('📤   encoded packet:', encoded);
 
-    console.log('📤 SOS sent:', packet.id, '| target:', target);
+    console.log('📤   calling connectionManager.sendMessage()...');
+    this._connectionManager?.sendMessage(encoded);
+    console.log('📤   connectionManager.sendMessage() returned');
+    console.log('════════════════════════════════');
+
     return packet;
   }
 

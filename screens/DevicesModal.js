@@ -89,7 +89,7 @@ export default function DevicesModal({ visible, onClose }) {
     if (!visible) return;
     updateDevices();
     connectionManager.addListener(handleDeviceUpdate);
-    const interval = setInterval(updateDevices, 2000);
+    const interval = setInterval(updateDevices, 1000);
     return () => {
       connectionManager.removeListener(handleDeviceUpdate);
       clearInterval(interval);
@@ -172,7 +172,7 @@ export default function DevicesModal({ visible, onClose }) {
                   const hasRssi     = device.rssi != null && device.rssi !== 0;
 
                   return (
-                    <View key={device.id || index} style={[styles.deviceCard, { backgroundColor: cardBg }]}>
+                    <View key={device.name || index} style={[styles.deviceCard, { backgroundColor: cardBg }]}>
 
                       {/* Icon */}
                       <View style={styles.deviceIcon}>
