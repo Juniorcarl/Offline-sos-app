@@ -221,6 +221,10 @@ class ConnectionManager {
     };
   }
 
+  getDebugInfo() {
+    return bluetoothMeshService.getDebugInfo();
+  }
+
   setBluetoothEnabled(enabled) {
     console.log(`${TAG} ── setBluetoothEnabled(${enabled})`);
     this.bluetoothEnabled = enabled;

@@ -20,10 +20,11 @@ import * as Location from 'expo-location';
 import PermissionManager from '../services/PermissionManager';
 import DevicesModal from './DevicesModal';
 import connectionManager from '../services/ConnectionManager';
+import messageService from '../services/MessageService';
 
 const SHAKE_THRESHOLD     = 2.5;
 const SHAKE_COOLDOWN      = 3000;
-const DEFAULT_SOS_MESSAGE = 'Help! I need immediate assistance';
+const DEFAULT_SOS_MESSAGE = 'Help me!!!';
 
 const { BluetoothModule, ShakeModule } = NativeModules;
 const shakeEmitter = ShakeModule ? new NativeEventEmitter(ShakeModule) : null;
@@ -37,11 +38,14 @@ export default function HomeScreen() {
 
   const [devicesModalVisible, setDevicesModalVisible] = useState(false);
   const [deviceCount, setDeviceCount]                 = useState(0);
+  const [connectedCount, setConnectedCount]           = useState(0);
   const [bluetoothEnabled, setBluetoothEnabled]       = useState(false);
   const [wifiEnabled, setWifiEnabled]                 = useState(false);
   const [wifiDirectEnabled, setWifiDirectEnabled]     = useState(false);
   const [appState, setAppState]                       = useState(AppState.currentState);
   const [userLocation, setUserLocation]               = useState(null);
+  const [debugVisible, setDebugVisible]               = useState(false);
+  const [debugInfo, setDebugInfo]                     = useState(null);
 
   const notifGranted = PermissionManager.getResults().notifications;
 
@@ -106,9 +110,30 @@ export default function HomeScreen() {
     return () => clearInterval(interval);
   }, []);
 
+  // Refresh debug panel every 2 seconds when visible
+  useEffect(() => {
+    if (!debugVisible) return;
+    refreshDebug();
+    const interval = setInterval(refreshDebug, 2000);
+    return () => clearInterval(interval);
+  }, [debugVisible]);
+
   useEffect(() => {
     initializeConnections();
-    return () => connectionManager.removeListener(handleDevicesUpdate);
+
+    const onAck = () => {
+      Alert.alert(
+        '✅ SOS Delivered',
+        'A nearby device confirmed receiving your SOS message.',
+        [{ text: 'OK' }]
+      );
+    };
+    messageService.addAckListener(onAck);
+
+    return () => {
+      connectionManager.removeListener(handleDevicesUpdate);
+      messageService.removeAckListener(onAck);
+    };
   }, []);
 
   useEffect(() => {
@@ -210,7 +235,35 @@ export default function HomeScreen() {
     if (Platform.OS === 'android') Linking.sendIntent('android.settings.WIFI_SETTINGS');
   };
 
-  const handleDevicesUpdate = (devices) => { setDeviceCount(devices.length); syncStats(); };
+  const handleDevicesUpdate = (devices) => {
+    setDeviceCount(devices.length);
+    setConnectedCount(devices.filter(d => d.isConnected).length);
+    syncStats();
+  };
+
+  const refreshDebug = () => {
+    try {
+      setDebugInfo(connectionManager.getDebugInfo());
+    } catch (e) {}
+  };
+
+  const sendTestMessage = async () => {
+    console.log('════════════════════════════════');
+    console.log('🧪 [DEBUG] sendTestMessage() TRIGGERED FROM DEBUG PANEL');
+    const info = connectionManager.getDebugInfo();
+    console.log('🧪 [DEBUG] connectedCount:', info.connectedCount);
+    console.log('🧪 [DEBUG] knownCount:', info.knownCount);
+    console.log('🧪 [DEBUG] devices:', JSON.stringify(info.devices));
+    try {
+      const packet = await messageService.sendSOS('DEBUG_TEST_MESSAGE', 'local');
+      console.log('🧪 [DEBUG] sendSOS returned packet:', JSON.stringify(packet));
+      Alert.alert('Debug Send', `sendSOS() called. Check logs for write result.\nPacket ID: ${packet?.id || 'none'}`);
+    } catch (e) {
+      console.error('🧪 [DEBUG] sendSOS threw:', e.message);
+      Alert.alert('Debug Send Error', e.message);
+    }
+    console.log('════════════════════════════════');
+  };
 
   // ── Pulse animation ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -237,51 +290,38 @@ export default function HomeScreen() {
   // ── Core SOS send ─────────────────────────────────────────────────────────
   const autoSendSOS = useCallback(() => {
     Vibration.vibrate([0, 300, 100, 300, 100, 300]);
-    const loc = userLocationRef.current;
 
-    connectionManager.sendMessage({
-      message:   DEFAULT_SOS_MESSAGE,
-      target:    'authority',
-      timestamp: Date.now(),
-      latitude:  loc?.lat ?? null,
-      longitude: loc?.lng ?? null,
-    });
-
-    connectionManager.sendMessage({
-      message:   DEFAULT_SOS_MESSAGE,
-      target:    'local',
-      timestamp: Date.now(),
-      latitude:  loc?.lat ?? null,
-      longitude: loc?.lng ?? null,
-    });
-
-    if (appStateRef.current === 'active') {
-      Alert.alert(
-        '🚨 SOS Sent',
-        `"${DEFAULT_SOS_MESSAGE}" has been sent to authorities and nearby users via the mesh network.`,
-        [
-          {
-            text: 'View on Map',
-            onPress: () => navigation.navigate('EmergencyMap', {
-              userLocation: userLocationRef.current,
-              messages: [{
-                id:        Date.now().toString(),
-                name:      'You',
-                message:   DEFAULT_SOS_MESSAGE,
-                distance:  '0m',
-                time:      'Just now',
-                hops:      0,
-                signal:    5,
-                delivered: true,
-                latitude:  loc?.lat ?? -22.5763,
-                longitude: loc?.lng ?? 27.1322,
-              }],
-            }),
-          },
-          { text: 'OK' },
-        ]
-      );
-    }
+    // Use messageService.sendSOS so the packet goes through the full pipeline:
+    // createPacket (UUID, TTL, GPS fetch) → encode → BLE broadcast → mesh relay
+    messageService.sendSOS(DEFAULT_SOS_MESSAGE, 'local').then((packet) => {
+      if (appStateRef.current === 'active') {
+        Alert.alert(
+          '🚨 SOS Sent',
+          `"${DEFAULT_SOS_MESSAGE}" has been broadcast to nearby devices via the mesh network.`,
+          [
+            {
+              text: 'View on Map',
+              onPress: () => navigation.navigate('EmergencyMap', {
+                userLocation: userLocationRef.current,
+                messages: packet ? [{
+                  id:        packet.id,
+                  name:      'You',
+                  message:   packet.msg,
+                  distance:  '0m',
+                  ts:        packet.ts,
+                  hops:      0,
+                  signal:    5,
+                  delivered: true,
+                  latitude:  packet.lat,
+                  longitude: packet.lon,
+                }] : [],
+              }),
+            },
+            { text: 'OK' },
+          ]
+        );
+      }
+    }).catch(() => {});
   }, []);
 
   // ── Notification tap handler ──────────────────────────────────────────────
@@ -340,7 +380,10 @@ export default function HomeScreen() {
           style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
         >
           <Text style={{ color: textColor, fontSize: 18 * fontSize, fontWeight: '500' }}>Devices Connected:</Text>
-          <Text style={{ color: devicesCountColor, fontSize: 18 * fontSize, fontWeight: '700' }}>{deviceCount}</Text>
+          <Text style={{ color: devicesCountColor, fontSize: 18 * fontSize, fontWeight: '700' }}>
+            {connectedCount}
+            {deviceCount > connectedCount ? ` (${deviceCount} in range)` : ''}
+          </Text>
         </TouchableOpacity>
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
@@ -372,7 +415,68 @@ export default function HomeScreen() {
               Shake SOS {shakeInBackground ? '(+ background)' : '(foreground only)'}
             </Text>
           </View>
+
+          {/* Debug toggle */}
+          <TouchableOpacity
+            onPress={() => { setDebugVisible(v => !v); if (!debugVisible) refreshDebug(); }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: darkMode ? '#1a1a1a' : '#f0f0f0', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}
+          >
+            <Text style={{ fontSize: 10 }}>🔧</Text>
+            <Text style={{ fontSize: 10 * fontSize, color: darkMode ? '#aaa' : '#555' }}>
+              Debug {debugVisible ? '▲' : '▼'}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Debug panel */}
+        {debugVisible && (
+          <View style={{ marginTop: 8, backgroundColor: darkMode ? '#111' : '#f8f8f8', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: darkMode ? '#333' : '#ddd' }}>
+            {debugInfo ? (
+              <>
+                <Text style={{ fontSize: 11, fontFamily: 'monospace', color: darkMode ? '#0f0' : '#060', fontWeight: '700', marginBottom: 4 }}>
+                  BLE DEBUG
+                </Text>
+                <Text style={{ fontSize: 10, fontFamily: 'monospace', color: darkMode ? '#ccc' : '#333', lineHeight: 16 }}>
+                  {'Name:     '}{debugInfo.deviceName}{'\n'}
+                  {'BT On:    '}{debugInfo.isBluetoothOn ? '✅' : '❌'}{'  GATT:  '}{debugInfo.gattServerRunning ? '✅' : '❌'}{'\n'}
+                  {'Scanning: '}{debugInfo.isScanning ? '✅' : '❌'}{'  Advert: '}{debugInfo.isAdvertising ? '✅' : '❌'}{'\n'}
+                  {'In Range: '}{debugInfo.knownCount}{'  Connected: '}{debugInfo.connectedCount}{'  Connecting: '}{debugInfo.connectingCount}{'\n'}
+                  {'PendingBackConn: '}{debugInfo.pendingBackConnect}{'  QueuedMsgs: '}{debugInfo.queuedMessages}
+                </Text>
+                {debugInfo.devices.length > 0 && (
+                  <View style={{ marginTop: 6 }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'monospace', color: darkMode ? '#aaa' : '#555', fontWeight: '700' }}>Peers:</Text>
+                    {debugInfo.devices.map((d, i) => (
+                      <Text key={i} style={{ fontSize: 10, fontFamily: 'monospace', color: d.connected ? (darkMode ? '#0f0' : '#060') : (darkMode ? '#f80' : '#a60'), lineHeight: 15 }}>
+                        {d.connected ? '●' : '○'} {d.name}{'\n'}
+                        {'  scan mac: '}{d.mac}  rssi:{d.rssi}  {d.lastSeen}s ago{'\n'}
+                        {'  conn mac: '}{d.connMac || '(not connected)'}
+                        {d.connected && d.mac !== d.connMac ? ' ⚠️STALE' : ''}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+                {debugInfo.devices.length === 0 && (
+                  <Text style={{ fontSize: 10, fontFamily: 'monospace', color: darkMode ? '#666' : '#999', marginTop: 4 }}>
+                    No peers discovered yet
+                  </Text>
+                )}
+
+                {/* Test send button */}
+                <TouchableOpacity
+                  onPress={sendTestMessage}
+                  style={{ marginTop: 8, backgroundColor: '#d64045', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignSelf: 'flex-start' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                    🧪 SEND TEST MSG ({debugInfo.connectedCount} connected)
+                  </Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={{ fontSize: 10, color: darkMode ? '#666' : '#999' }}>Loading debug info...</Text>
+            )}
+          </View>
+        )}
       </View>
 
       {showNotifBanner && (

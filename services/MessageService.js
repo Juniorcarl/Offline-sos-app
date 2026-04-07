@@ -23,6 +23,12 @@ class MessageService {
     this._seen     = new Map();
     /** Listeners notified when a NEW message arrives: (packet) => void */
     this._listeners = [];
+    /** Listeners notified when an ACK arrives for a message WE sent: (messageId) => void */
+    this._ackListeners = [];
+    /** IDs of messages this device has sent — used to match incoming ACKs */
+    this._sentIds  = new Set();
+    /** ACK message IDs we've already processed — prevents relay loops */
+    this._seenAcks = new Set();
     /** Our own device id — set by ConnectionManager on init */
     this.deviceId  = null;
     /** Reference injected by ConnectionManager so we can broadcast */
@@ -87,6 +93,7 @@ class MessageService {
     console.log('📤   packet.id:', packet.id);
 
     this._markSeen(packet.id);
+    this._sentIds.add(packet.id);
     console.log('📤   marked as seen (won\'t relay our own message back)');
 
     const encoded = encodePacket(packet);
@@ -98,6 +105,9 @@ class MessageService {
     console.log('📤   connectionManager.sendMessage() returned');
     console.log('════════════════════════════════');
 
+    // Show in message history immediately (with _isMine flag so UI can style it)
+    this._notifyListeners({ ...packet, _isMine: true });
+
     return packet;
   }
 
@@ -108,6 +118,13 @@ class MessageService {
    * Handles dedup, relay, and notifying UI.
    */
   handleIncoming(raw) {
+    // ── ACK short-circuit ────────────────────────────────────────────────────
+    if (typeof raw === 'string' && raw.startsWith('ACK:')) {
+      this._handleAck(raw);
+      return;
+    }
+
+    // ── Normal SOS packet ────────────────────────────────────────────────────
     const packet = decodePacket(raw);
     if (!packet) {
       console.warn('⚠️ MessageService: malformed packet, ignoring');
@@ -130,6 +147,11 @@ class MessageService {
     this._notifyListeners(packet);
     notificationService.showAlert(packet);
 
+    // Send ACK back through the mesh so the original sender knows we got it
+    const ack = `ACK:${packet.id}`;
+    this._connectionManager?.sendMessage(ack);
+    console.log(`📨 Sent ACK for ${packet.id}`);
+
     // Relay to rest of mesh (flood with TTL decrement)
     const relay = relayPacket(packet);
     if (relay) {
@@ -139,7 +161,29 @@ class MessageService {
     }
   }
 
-  // ── Listeners ─────────────────────────────────────────────────────────────
+  // ── ACK handling ──────────────────────────────────────────────────────────
+
+  _handleAck(raw) {
+    const messageId = raw.slice(4); // strip "ACK:"
+    if (!messageId) return;
+
+    // Dedup — prevents relay loops
+    if (this._seenAcks.has(messageId)) return;
+    this._seenAcks.add(messageId);
+
+    // If WE sent this message, notify UI listeners (delivery confirmation)
+    if (this._sentIds.has(messageId)) {
+      console.log(`✅ ACK received — our message ${messageId} was delivered`);
+      this._notifyAckListeners(messageId);
+      return; // don't relay — we are the intended destination
+    }
+
+    // Otherwise relay the ACK onwards so it can reach the original sender
+    this._connectionManager?.sendMessage(raw);
+    console.log(`🔄 Relayed ACK for ${messageId}`);
+  }
+
+  // ── SOS listeners ─────────────────────────────────────────────────────────
 
   addListener(cb)    { this._listeners.push(cb); }
   removeListener(cb) { this._listeners = this._listeners.filter(l => l !== cb); }
@@ -147,6 +191,17 @@ class MessageService {
   _notifyListeners(packet) {
     this._listeners.forEach(cb => {
       try { cb(packet); } catch (e) { console.error('MessageService listener error:', e); }
+    });
+  }
+
+  // ── ACK listeners ──────────────────────────────────────────────────────────
+
+  addAckListener(cb)    { this._ackListeners.push(cb); }
+  removeAckListener(cb) { this._ackListeners = this._ackListeners.filter(l => l !== cb); }
+
+  _notifyAckListeners(messageId) {
+    this._ackListeners.forEach(cb => {
+      try { cb(messageId); } catch (e) { console.error('MessageService ACK listener error:', e); }
     });
   }
 

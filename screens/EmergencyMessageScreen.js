@@ -15,6 +15,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { useUser } from '../context/UserContext';
 import connectionManager from '../services/ConnectionManager';
+import messageService from '../services/MessageService';
 
 const SUGGESTED_MESSAGES = [
   "Help! I need immediate assistance",
@@ -134,7 +135,7 @@ export default function EmergencyMessageScreen() {
   }, [countdown]);
 
   // ── Send execution ────────────────────────────────────────────────────────
-  const executeSend = (target) => {
+  const executeSend = async (target) => {
     clearInterval(timerRef.current);
     setTimerActive(false);
     setTargetModalVisible(false);
@@ -142,14 +143,20 @@ export default function EmergencyMessageScreen() {
     setIsSending(true);
 
     const finalMessage = customMessage.trim();
+    console.log(`[EmergencyMessageScreen] executeSend — target=${target} message="${finalMessage}"`);
 
-    setTimeout(() => {
-      setIsSending(false);
-      setSentMessage(finalMessage);
-      setSuccessTarget(target);
-      setSuccessModalVisible(true);
-      animateModalIn();
-    }, 1500);
+    try {
+      await messageService.sendSOS(finalMessage, target);
+      console.log('[EmergencyMessageScreen] sendSOS completed');
+    } catch (e) {
+      console.error('[EmergencyMessageScreen] sendSOS error:', e);
+    }
+
+    setIsSending(false);
+    setSentMessage(finalMessage);
+    setSuccessTarget(target);
+    setSuccessModalVisible(true);
+    animateModalIn();
   };
 
   // ── Send button pressed — show target modal ───────────────────────────────

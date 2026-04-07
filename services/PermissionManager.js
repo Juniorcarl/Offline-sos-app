@@ -1,9 +1,16 @@
-import { Alert, Linking, Platform, PermissionsAndroid } from 'react-native';
+import { Alert, Platform, PermissionsAndroid } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 
 let hasRun = false;
 let cachedResults = null;
+
+// Show an alert and wait for the user to tap Continue
+function explain(title, message) {
+  return new Promise(resolve => {
+    Alert.alert(title, message, [{ text: 'Continue', onPress: resolve }], { cancelable: false });
+  });
+}
 
 const PermissionManager = {
 
@@ -21,7 +28,15 @@ const PermissionManager = {
       const { status: existing } = await Location.getForegroundPermissionsAsync();
       if (existing === 'granted') {
         results.location = true;
-      } else if (existing === 'undetermined') {
+      } else {
+        await explain(
+          '📍 Location Access',
+          'This app needs your location to:\n\n' +
+          '• Show your position on the offline map\n' +
+          '• Help rescuers find you in an emergency\n' +
+          '• Attach coordinates to SOS messages\n\n' +
+          "We'll ask for location permission next."
+        );
         const { status } = await Location.requestForegroundPermissionsAsync();
         results.location = status === 'granted';
       }
@@ -29,7 +44,7 @@ const PermissionManager = {
       console.log('PermissionManager location error:', e);
     }
 
-    await delay(400);
+    await delay(300);
 
     // ── Step 2: Bluetooth (Android 12+) ───────────────────────────────────
     if (Platform.OS === 'android') {
@@ -40,11 +55,25 @@ const PermissionManager = {
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
         ].filter(p => p != null && p !== '');
 
-        const granted = await PermissionsAndroid.requestMultiple(btPermissions);
+        const checks = await Promise.all(btPermissions.map(p => PermissionsAndroid.check(p)));
+        const allGranted = checks.every(Boolean);
 
-        results.bluetooth = btPermissions.every(
-          p => granted[p] === PermissionsAndroid.RESULTS.GRANTED
-        );
+        if (allGranted) {
+          results.bluetooth = true;
+        } else {
+          await explain(
+            '🔵 Bluetooth Access',
+            'Bluetooth is the backbone of the offline mesh network.\n\n' +
+            '• Discover nearby devices running this app\n' +
+            '• Relay SOS messages without internet\n' +
+            '• Extend the network range hop-by-hop\n\n' +
+            "We'll ask for Bluetooth permission next."
+          );
+          const granted = await PermissionsAndroid.requestMultiple(btPermissions);
+          results.bluetooth = btPermissions.every(
+            p => granted[p] === PermissionsAndroid.RESULTS.GRANTED
+          );
+        }
       } catch (e) {
         console.log('PermissionManager bluetooth error:', e);
         results.bluetooth = false;
@@ -53,42 +82,27 @@ const PermissionManager = {
       results.bluetooth = true;
     }
 
-    await delay(400);
+    await delay(300);
 
     // ── Step 3: Notifications ──────────────────────────────────────────────
     try {
       const { status: existing } = await Notifications.getPermissionsAsync();
       if (existing === 'granted') {
         results.notifications = true;
-      } else if (existing === 'undetermined') {
+      } else {
+        await explain(
+          '🔔 Notifications',
+          'Allow notifications so the app can:\n\n' +
+          '• Alert you when a nearby SOS is received\n' +
+          '• Warn you if the mesh network goes offline\n' +
+          '• Confirm your own SOS was sent\n\n' +
+          "We'll ask for notification permission next."
+        );
         const { status } = await Notifications.requestPermissionsAsync();
         results.notifications = status === 'granted';
       }
     } catch (e) {
       console.log('PermissionManager notifications error:', e);
-    }
-
-    await delay(600);
-
-    // ── Step 4: Warn about denied permissions ──────────────────────────────
-    const denied = [];
-    if (!results.location)      denied.push('Location');
-    if (!results.bluetooth)     denied.push('Bluetooth');
-    if (!results.notifications) denied.push('Notifications');
-
-    if (denied.length > 0) {
-      Alert.alert(
-        '⚠️ Permissions Required',
-        `${denied.join(', ')} ${denied.length === 1 ? 'permission is' : 'permissions are'} required for the app to work properly.\n\n` +
-        `• Location — GPS tracking and mesh network\n` +
-        `• Bluetooth — mesh network discovery\n` +
-        `• Notifications — background SOS alerts\n\n` +
-        `Please enable ${denied.length === 1 ? 'it' : 'them'} in Settings.`,
-        [
-          { text: 'Later', style: 'cancel' },
-          { text: 'Open Settings', onPress: () => Linking.openSettings() },
-        ]
-      );
     }
 
     hasRun = true;
