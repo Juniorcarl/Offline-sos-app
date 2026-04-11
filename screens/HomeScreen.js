@@ -44,8 +44,6 @@ export default function HomeScreen() {
   const [wifiDirectEnabled, setWifiDirectEnabled]     = useState(false);
   const [appState, setAppState]                       = useState(AppState.currentState);
   const [userLocation, setUserLocation]               = useState(null);
-  const [debugVisible, setDebugVisible]               = useState(false);
-  const [debugInfo, setDebugInfo]                     = useState(null);
 
   const notifGranted = PermissionManager.getResults().notifications;
 
@@ -86,7 +84,6 @@ export default function HomeScreen() {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
       } catch (e) {
-        console.log('HomeScreen initial location error:', e);
       }
       Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, distanceInterval: 20, timeInterval: 10000 },
@@ -109,14 +106,6 @@ export default function HomeScreen() {
     const interval = setInterval(checkBT, 2000);
     return () => clearInterval(interval);
   }, []);
-
-  // Refresh debug panel every 2 seconds when visible
-  useEffect(() => {
-    if (!debugVisible) return;
-    refreshDebug();
-    const interval = setInterval(refreshDebug, 2000);
-    return () => clearInterval(interval);
-  }, [debugVisible]);
 
   useEffect(() => {
     initializeConnections();
@@ -241,30 +230,6 @@ export default function HomeScreen() {
     syncStats();
   };
 
-  const refreshDebug = () => {
-    try {
-      setDebugInfo(connectionManager.getDebugInfo());
-    } catch (e) {}
-  };
-
-  const sendTestMessage = async () => {
-    console.log('════════════════════════════════');
-    console.log('🧪 [DEBUG] sendTestMessage() TRIGGERED FROM DEBUG PANEL');
-    const info = connectionManager.getDebugInfo();
-    console.log('🧪 [DEBUG] connectedCount:', info.connectedCount);
-    console.log('🧪 [DEBUG] knownCount:', info.knownCount);
-    console.log('🧪 [DEBUG] devices:', JSON.stringify(info.devices));
-    try {
-      const packet = await messageService.sendSOS('DEBUG_TEST_MESSAGE', 'local');
-      console.log('🧪 [DEBUG] sendSOS returned packet:', JSON.stringify(packet));
-      Alert.alert('Debug Send', `sendSOS() called. Check logs for write result.\nPacket ID: ${packet?.id || 'none'}`);
-    } catch (e) {
-      console.error('🧪 [DEBUG] sendSOS threw:', e.message);
-      Alert.alert('Debug Send Error', e.message);
-    }
-    console.log('════════════════════════════════');
-  };
-
   // ── Pulse animation ───────────────────────────────────────────────────────
   useEffect(() => {
     if (reduceMotion) return;
@@ -320,6 +285,16 @@ export default function HomeScreen() {
             { text: 'OK' },
           ]
         );
+      } else {
+        // App is in background — show a notification so the user knows SOS fired
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: '🚨 SOS Sent',
+            body: 'Shake detected — your emergency SOS has been broadcast to nearby devices.',
+            sound: true,
+          },
+          trigger: null, // fire immediately
+        }).catch(() => {});
       }
     }).catch(() => {});
   }, []);
@@ -349,22 +324,34 @@ export default function HomeScreen() {
   }, [autoSendSOS]);
 
   // ── Background shake ──────────────────────────────────────────────────────
+  // The native ShakeDetectionService detects the shake and brings the app to
+  // foreground via Intent (singleTask → onNewIntent). ShakeModule catches
+  // onNewIntent and emits ShakeDetected to JS here.
   useEffect(() => {
-    if (!ShakeModule || !shakeEmitter) return;
-    let subscription = null;
-    if (shakeInBackground) {
-      ShakeModule.startBackgroundShake();
-      subscription = shakeEmitter.addListener('ShakeDetected', () => {
-        const now = Date.now();
-        if (now - lastShake.current > SHAKE_COOLDOWN) {
-          lastShake.current = now;
-          autoSendSOS();
-        }
-      });
-    } else {
-      ShakeModule.stopBackgroundShake();
+    if (!ShakeModule || !shakeEmitter) {
+      console.warn('[Shake] ShakeModule not available');
+      return;
     }
-    return () => { if (subscription) subscription.remove(); };
+
+    const subscription = shakeEmitter.addListener('ShakeDetected', () => {
+      console.log('[Shake] ShakeDetected received in JS');
+      const now = Date.now();
+      if (now - lastShake.current > SHAKE_COOLDOWN) {
+        lastShake.current = now;
+        autoSendSOS();
+      }
+    });
+
+    if (shakeInBackground) {
+      ShakeModule.startBackgroundShake()
+        .then(() => console.log('[Shake] background service started'))
+        .catch((err) => console.error('[Shake] startBackgroundShake error:', err));
+    } else {
+      ShakeModule.stopBackgroundShake()
+        .catch((err) => console.warn('[Shake] stopBackgroundShake error:', err));
+    }
+
+    return () => subscription.remove();
   }, [shakeInBackground, autoSendSOS]);
 
   const meshLimited    = !bluetoothEnabled || (!wifiEnabled && !wifiDirectEnabled);
@@ -416,67 +403,7 @@ export default function HomeScreen() {
             </Text>
           </View>
 
-          {/* Debug toggle */}
-          <TouchableOpacity
-            onPress={() => { setDebugVisible(v => !v); if (!debugVisible) refreshDebug(); }}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: darkMode ? '#1a1a1a' : '#f0f0f0', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}
-          >
-            <Text style={{ fontSize: 10 }}>🔧</Text>
-            <Text style={{ fontSize: 10 * fontSize, color: darkMode ? '#aaa' : '#555' }}>
-              Debug {debugVisible ? '▲' : '▼'}
-            </Text>
-          </TouchableOpacity>
         </View>
-
-        {/* Debug panel */}
-        {debugVisible && (
-          <View style={{ marginTop: 8, backgroundColor: darkMode ? '#111' : '#f8f8f8', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: darkMode ? '#333' : '#ddd' }}>
-            {debugInfo ? (
-              <>
-                <Text style={{ fontSize: 11, fontFamily: 'monospace', color: darkMode ? '#0f0' : '#060', fontWeight: '700', marginBottom: 4 }}>
-                  BLE DEBUG
-                </Text>
-                <Text style={{ fontSize: 10, fontFamily: 'monospace', color: darkMode ? '#ccc' : '#333', lineHeight: 16 }}>
-                  {'Name:     '}{debugInfo.deviceName}{'\n'}
-                  {'BT On:    '}{debugInfo.isBluetoothOn ? '✅' : '❌'}{'  GATT:  '}{debugInfo.gattServerRunning ? '✅' : '❌'}{'\n'}
-                  {'Scanning: '}{debugInfo.isScanning ? '✅' : '❌'}{'  Advert: '}{debugInfo.isAdvertising ? '✅' : '❌'}{'\n'}
-                  {'In Range: '}{debugInfo.knownCount}{'  Connected: '}{debugInfo.connectedCount}{'  Connecting: '}{debugInfo.connectingCount}{'\n'}
-                  {'PendingBackConn: '}{debugInfo.pendingBackConnect}{'  QueuedMsgs: '}{debugInfo.queuedMessages}
-                </Text>
-                {debugInfo.devices.length > 0 && (
-                  <View style={{ marginTop: 6 }}>
-                    <Text style={{ fontSize: 10, fontFamily: 'monospace', color: darkMode ? '#aaa' : '#555', fontWeight: '700' }}>Peers:</Text>
-                    {debugInfo.devices.map((d, i) => (
-                      <Text key={i} style={{ fontSize: 10, fontFamily: 'monospace', color: d.connected ? (darkMode ? '#0f0' : '#060') : (darkMode ? '#f80' : '#a60'), lineHeight: 15 }}>
-                        {d.connected ? '●' : '○'} {d.name}{'\n'}
-                        {'  scan mac: '}{d.mac}  rssi:{d.rssi}  {d.lastSeen}s ago{'\n'}
-                        {'  conn mac: '}{d.connMac || '(not connected)'}
-                        {d.connected && d.mac !== d.connMac ? ' ⚠️STALE' : ''}
-                      </Text>
-                    ))}
-                  </View>
-                )}
-                {debugInfo.devices.length === 0 && (
-                  <Text style={{ fontSize: 10, fontFamily: 'monospace', color: darkMode ? '#666' : '#999', marginTop: 4 }}>
-                    No peers discovered yet
-                  </Text>
-                )}
-
-                {/* Test send button */}
-                <TouchableOpacity
-                  onPress={sendTestMessage}
-                  style={{ marginTop: 8, backgroundColor: '#d64045', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignSelf: 'flex-start' }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                    🧪 SEND TEST MSG ({debugInfo.connectedCount} connected)
-                  </Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <Text style={{ fontSize: 10, color: darkMode ? '#666' : '#999' }}>Loading debug info...</Text>
-            )}
-          </View>
-        )}
       </View>
 
       {showNotifBanner && (

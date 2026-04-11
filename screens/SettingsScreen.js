@@ -43,7 +43,7 @@ export default function SettingsScreen() {
 
         <View style={styles.profileSection}>
           <View style={[styles.avatarCircle, { backgroundColor: darkMode ? '#333' : '#e8e0e0' }]}>
-            <Text style={styles.avatarIcon}>👤</Text>  {/* Always show user icon */}
+            <Text style={styles.avatarIcon}>👤</Text>
           </View>
           <Text style={[styles.profileName, { fontSize: 20 * fontSize, color: textColor }]}>
             {name}

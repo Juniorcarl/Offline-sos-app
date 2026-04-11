@@ -6,6 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useUser } from '../context/UserContext';
+import messageService from '../services/MessageService';
 
 const LANGUAGES = ['English', 'Setswana'];
 
@@ -51,6 +52,8 @@ export default function ProfileScreen() {
   const navigation = useNavigation();
   const {
     name, setName,
+    role, setRole,
+    adminType, setAdminType,
     fontSize, darkMode,
     clearAllData,
   } = useUser();  
@@ -63,10 +66,16 @@ export default function ProfileScreen() {
   const [editedName, setEditedName] = useState(name);
   const [language, setLanguage] = useState('English');
   const [langModalVisible, setLangModalVisible] = useState(false);
+  const [selectedRole, setSelectedRole] = useState(role);
+  const [editedAdminType, setEditedAdminType] = useState(adminType);
 
   const handleSave = () => {
     if (editedName.trim()) {
       setName(editedName.trim());
+      setRole(selectedRole);
+      const finalAdminType = selectedRole === 'Admin' ? editedAdminType.trim() : '';
+      setAdminType(finalAdminType);
+      messageService.setLocalRole(selectedRole, finalAdminType);
       Alert.alert('Saved', 'Your profile has been updated.');
     }
   };
@@ -84,6 +93,9 @@ export default function ProfileScreen() {
             await clearAllData();
             setEditedName('Your Name');
             setLanguage('English');
+            setSelectedRole('User');
+            setEditedAdminType('');
+            messageService.setLocalRole('User', '');
             Alert.alert('Done', 'All data has been cleared.');
           },
         },
@@ -107,7 +119,7 @@ export default function ProfileScreen() {
 
         <View style={styles.avatarSection}>
           <View style={[styles.avatarCircle, { backgroundColor: darkMode ? '#333' : '#e8e0e0' }]}>
-            <Text style={styles.avatarIcon}>👤</Text>  {/* Always show user icon */}
+            <Text style={styles.avatarIcon}>👤</Text>
           </View>
         </View>
 
@@ -129,6 +141,79 @@ export default function ProfileScreen() {
             <Text style={[styles.dropdownValue, { fontSize: 16 * fontSize, color: textColor }]}>{language}</Text>
             <Ionicons name="chevron-down" size={18} color={subColor} />
           </TouchableOpacity>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: cardBg }]}>
+          <Text style={[styles.fieldLabel, { fontSize: 11 * fontSize, color: subColor }]}>ROLE</Text>
+          <View style={styles.roleToggleRow}>
+            <TouchableOpacity
+              style={[
+                styles.roleBtn,
+                selectedRole === 'User' && styles.roleBtnActive,
+                { borderColor: selectedRole === 'User' ? '#d64045' : (darkMode ? '#444' : '#ddd') },
+              ]}
+              onPress={() => setSelectedRole('User')}
+            >
+              <Ionicons
+                name="person-outline"
+                size={15}
+                color={selectedRole === 'User' ? '#d64045' : subColor}
+              />
+              <Text style={[
+                styles.roleBtnText,
+                { fontSize: 14 * fontSize, color: selectedRole === 'User' ? '#d64045' : subColor },
+                selectedRole === 'User' && { fontWeight: '700' },
+              ]}>
+                User
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.roleBtn,
+                selectedRole === 'Admin' && styles.roleBtnActive,
+                { borderColor: selectedRole === 'Admin' ? '#d64045' : (darkMode ? '#444' : '#ddd') },
+              ]}
+              onPress={() => setSelectedRole('Admin')}
+            >
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={15}
+                color={selectedRole === 'Admin' ? '#d64045' : subColor}
+              />
+              <Text style={[
+                styles.roleBtnText,
+                { fontSize: 14 * fontSize, color: selectedRole === 'Admin' ? '#d64045' : subColor },
+                selectedRole === 'Admin' && { fontWeight: '700' },
+              ]}>
+                Admin
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {selectedRole === 'Admin' && (
+            <View style={styles.adminTypeSection}>
+              <Text style={[styles.adminTypeLabel, { fontSize: 11 * fontSize, color: subColor }]}>
+                ADMIN TYPE (e.g. Security Police, Medics)
+              </Text>
+              <TextInput
+                style={[
+                  styles.adminTypeInput,
+                  {
+                    fontSize: 15 * fontSize,
+                    color: textColor,
+                    borderColor: darkMode ? '#444' : '#e8e0e0',
+                    backgroundColor: darkMode ? '#2a2a2a' : '#faf5f5',
+                  },
+                ]}
+                value={editedAdminType}
+                onChangeText={setEditedAdminType}
+                placeholder="Describe your role..."
+                placeholderTextColor={subColor}
+                maxLength={60}
+              />
+            </View>
+          )}
         </View>
 
         <TouchableOpacity
@@ -178,6 +263,19 @@ const styles = StyleSheet.create({
   textInput: { paddingVertical: 4 },
   dropdownRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
   dropdownValue: {},
+  roleToggleRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  roleBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10, borderRadius: 12, borderWidth: 1.5,
+  },
+  roleBtnActive: { backgroundColor: 'rgba(214,64,69,0.07)' },
+  roleBtnText: {},
+  adminTypeSection: { marginTop: 14 },
+  adminTypeLabel: { fontWeight: '700', letterSpacing: 1, marginBottom: 8 },
+  adminTypeInput: {
+    borderWidth: 1.5, borderRadius: 10, paddingHorizontal: 12,
+    paddingVertical: 10, marginTop: 2,
+  },
   clearBtn: {
     marginTop: 8, paddingVertical: 16, alignItems: 'center',
     borderRadius: 16, shadowColor: '#000',

@@ -33,6 +33,10 @@ class MessageService {
     this.deviceId  = null;
     /** Reference injected by ConnectionManager so we can broadcast */
     this._connectionManager = null;
+    /** Local device role — 'User' or 'Admin' */
+    this._localRole      = 'User';
+    /** Local admin type description (e.g. 'Medics'), empty for non-admin */
+    this._localAdminType = '';
 
     // Prune stale seen ids every minute
     setInterval(() => this._pruneSeen(), 60_000);
@@ -43,6 +47,17 @@ class MessageService {
   init(connectionManager, deviceId) {
     this._connectionManager = connectionManager;
     this.deviceId = deviceId;
+  }
+
+  /**
+   * Update the local device's role. Call this after the user saves their profile.
+   * @param {'User'|'Admin'} role
+   * @param {string} adminType
+   */
+  setLocalRole(role, adminType = '') {
+    this._localRole      = role === 'Admin' ? 'Admin' : 'User';
+    this._localAdminType = this._localRole === 'Admin' ? (adminType || '') : '';
+    console.log(`[MessageService] localRole set to: ${this._localRole} (${this._localAdminType})`);
   }
 
   // ── Outgoing ──────────────────────────────────────────────────────────────
@@ -85,8 +100,10 @@ class MessageService {
       message,
       latitude,
       longitude,
-      senderId: this.deviceId,
+      senderId:        this.deviceId,
       target,
+      senderRole:      this._localRole,
+      senderAdminType: this._localAdminType,
     });
 
     console.log('📤   packet created:', JSON.stringify(packet));
@@ -141,11 +158,24 @@ class MessageService {
     }
     this._markSeen(packet.id);
 
-    console.log(`📩 New SOS from ${packet.sid} | target:${packet.target} | ttl:${packet.ttl}`);
+    console.log(`📩 New SOS from ${packet.sid} | target:${packet.target} | sRole:${packet.sRole} | ttl:${packet.ttl}`);
 
-    // Notify UI & trigger alert
-    this._notifyListeners(packet);
-    notificationService.showAlert(packet);
+    // Route by target vs local role — always relay, only alert the intended role:
+    //   'local'     → alert User devices only
+    //   'admin'     → alert Admin devices only
+    //   'authority' → alert everyone
+    const localIsAdmin = this._localRole === 'Admin';
+    const shouldNotify =
+      packet.target === 'authority' ||
+      (packet.target === 'admin' &&  localIsAdmin) ||
+      (packet.target === 'local' && !localIsAdmin);
+
+    if (shouldNotify) {
+      this._notifyListeners(packet);
+      notificationService.showAlert(packet);
+    } else {
+      console.log(`📩 Message target="${packet.target}" skipped on ${this._localRole} device — relaying only`);
+    }
 
     // Send ACK back through the mesh so the original sender knows we got it
     const ack = `ACK:${packet.id}`;

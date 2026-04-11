@@ -10,8 +10,10 @@
  *   lon:       number   — sender GPS longitude (null if unavailable)
  *   ts:        number   — unix timestamp ms
  *   sid:       string   — sender device id (trimmed)
- *   target:    'local' | 'authority'
+ *   target:    'local' | 'authority' | 'admin'
  *   ttl:       number   — hops remaining (decrements each relay, drop at 0)
+ *   sRole:     'User' | 'Admin'          — sender's role
+ *   sAdmin:    string                    — sender's admin type (e.g. "Medics"), empty for non-admin
  * }
  *
  * Max serialised size is well under 512 bytes for BLE MTU comfort.
@@ -22,7 +24,8 @@ export const MAX_TTL = 5; // how many relay hops allowed
 /**
  * Build a new outgoing message packet.
  */
-export function createPacket({ message, latitude, longitude, senderId, target }) {
+export function createPacket({ message, latitude, longitude, senderId, target, senderRole, senderAdminType }) {
+  const validTargets = ['authority', 'admin'];
   return {
     id:     uuidv4(),
     msg:    (message || '').slice(0, 200),
@@ -30,8 +33,10 @@ export function createPacket({ message, latitude, longitude, senderId, target })
     lon:    longitude ?? null,
     ts:     Date.now(),
     sid:    (senderId || 'unknown').slice(0, 32),
-    target: target === 'authority' ? 'authority' : 'local',
+    target: validTargets.includes(target) ? target : 'local',
     ttl:    MAX_TTL,
+    sRole:  senderRole === 'Admin' ? 'Admin' : 'User',
+    sAdmin: senderRole === 'Admin' ? (senderAdminType || '').slice(0, 60) : '',
   };
 }
 

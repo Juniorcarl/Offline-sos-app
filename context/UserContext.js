@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import messageService from '../services/MessageService';
 
 const UserContext = createContext();
 
@@ -12,6 +13,7 @@ const DEFAULTS = {
   shakeInBackground: false, // shake-to-SOS is always ON; this controls background-only behaviour
   darkMode: false,
   role: 'User',
+  adminType: '',
   alertSound: true,
   alertVibration: true,
   alertFlashlight: true,
@@ -29,6 +31,7 @@ export function UserProvider({ children }) {
   const [shakeInBackground, setShakeInBackgroundState] = useState(DEFAULTS.shakeInBackground);
   const [darkMode,          setDarkModeState]          = useState(DEFAULTS.darkMode);
   const [role,              setRoleState]              = useState(DEFAULTS.role);
+  const [adminType,         setAdminTypeState]         = useState(DEFAULTS.adminType);
   const [alertSound,        setAlertSoundState]        = useState(DEFAULTS.alertSound);
   const [alertVibration,    setAlertVibrationState]    = useState(DEFAULTS.alertVibration);
   const [alertFlashlight,   setAlertFlashlightState]   = useState(DEFAULTS.alertFlashlight);
@@ -42,7 +45,7 @@ export function UserProvider({ children }) {
       try {
         const keys = [
           'name', 'fontSize', 'sosSize', 'reduceMotion',
-          'colorBlindMode', 'shakeInBackground', 'darkMode', 'role',
+          'colorBlindMode', 'shakeInBackground', 'darkMode', 'role', 'adminType',
           'alertSound', 'alertVibration', 'alertFlashlight',
           'alertRepeat', 'alertVolume', 'alertSoundId',
         ];
@@ -58,6 +61,7 @@ export function UserProvider({ children }) {
           if (key === 'shakeInBackground') setShakeInBackgroundState(parsed);
           if (key === 'darkMode')          setDarkModeState(parsed);
           if (key === 'role')              setRoleState(parsed);
+          if (key === 'adminType')         setAdminTypeState(parsed);
           if (key === 'alertSound')        setAlertSoundState(parsed);
           if (key === 'alertVibration')    setAlertVibrationState(parsed);
           if (key === 'alertFlashlight')   setAlertFlashlightState(parsed);
@@ -74,6 +78,11 @@ export function UserProvider({ children }) {
     loadSettings();
   }, []);
 
+  // Keep MessageService in sync with role so packets are correctly filtered
+  useEffect(() => {
+    messageService.setLocalRole(role, adminType);
+  }, [role, adminType]);
+
   const save = async (key, value) => {
     try { await AsyncStorage.setItem(key, JSON.stringify(value)); }
     catch (e) { console.log(`Failed to save ${key}:`, e); }
@@ -87,6 +96,7 @@ export function UserProvider({ children }) {
   const setShakeInBackground = (v) => { setShakeInBackgroundState(v); save('shakeInBackground', v); };
   const setDarkMode          = (v) => { setDarkModeState(v);          save('darkMode', v); };
   const setRole              = (v) => { setRoleState(v);              save('role', v); };
+  const setAdminType         = (v) => { setAdminTypeState(v);         save('adminType', v); };
   const setAlertSound        = (v) => { setAlertSoundState(v);        save('alertSound', v); };
   const setAlertVibration    = (v) => { setAlertVibrationState(v);    save('alertVibration', v); };
   const setAlertFlashlight   = (v) => { setAlertFlashlightState(v);   save('alertFlashlight', v); };
@@ -98,7 +108,7 @@ export function UserProvider({ children }) {
     try {
       await AsyncStorage.multiRemove([
         'name', 'fontSize', 'sosSize', 'reduceMotion',
-        'colorBlindMode', 'shakeInBackground', 'darkMode', 'role',
+        'colorBlindMode', 'shakeInBackground', 'darkMode', 'role', 'adminType',
         'alertSound', 'alertVibration', 'alertFlashlight',
         'alertRepeat', 'alertVolume', 'alertSoundId',
       ]);
@@ -110,6 +120,7 @@ export function UserProvider({ children }) {
       setShakeInBackgroundState(DEFAULTS.shakeInBackground);
       setDarkModeState(DEFAULTS.darkMode);
       setRoleState(DEFAULTS.role);
+      setAdminTypeState(DEFAULTS.adminType);
       setAlertSoundState(DEFAULTS.alertSound);
       setAlertVibrationState(DEFAULTS.alertVibration);
       setAlertFlashlightState(DEFAULTS.alertFlashlight);
@@ -133,6 +144,7 @@ export function UserProvider({ children }) {
       shakeInBackground, setShakeInBackground,
       darkMode,          setDarkMode,
       role,              setRole,
+      adminType,         setAdminType,
       alertSound,        setAlertSound,
       alertVibration,    setAlertVibration,
       alertFlashlight,   setAlertFlashlight,
