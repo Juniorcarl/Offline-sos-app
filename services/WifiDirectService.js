@@ -1,543 +1,916 @@
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeModules, NativeEventEmitter, Platform, Alert } from 'react-native';
 import * as Location from 'expo-location';
 
-const { WifiDirectModule } = NativeModules;
-const TAG = '[WifiDirect]';
+const { WifiDirectModule, WifiDirectSocketModule } = NativeModules;
+
+const TAG = '[WifiDirectService]';
+const STAG = '[WifiDirectSocketJS]';
+
+const APP_ID = 'OfflineSOS';
+const APP_VERSION = 1;
+const HANDSHAKE_TIMEOUT_MS = 5000;
+const REJECT_COOLDOWN_MS = 60000; // 1 min
 
 class WifiDirectService {
   constructor() {
-    this.devices            = new Map();
-    this.connectedDevices   = new Map();
-    this.listeners          = [];
-    this.messageListeners   = [];
-    this.isDiscovering      = false;
-    this.isConnected        = false;
-    this.isInitialized      = false;
-    this.eventEmitter       = null;
-    this.eventSubscriptions = [];
-    this.pendingConnections  = new Set();
-    this.onStateChanged      = null;
-    this._initCount          = 0;
-    this.localDeviceAddress  = null;
-    this.isWifiDirectOn      = false;
-    this._discoveryPending   = false;
-    // Android 10+ masks local P2P MAC as 02:00:00:00:00:00 on all devices,
-    // so address comparison is useless for the tie-breaker.
-    // Use a stable random token instead — persists for the lifetime of this service.
-    this._tiebreakToken      = Math.random();
-    console.log(`${TAG} WifiDirectService constructed`);
-    console.log(`${TAG}   WifiDirectModule available: ${!!WifiDirectModule}`);
-    console.log(`${TAG}   Platform: ${Platform.OS} v${Platform.Version}`);
+    this.devices = new Map();
+    this.connectedDevices = new Map();
+
+    this.listeners = [];
+    this.messageListeners = [];
+
+    this.isInitialized = false;
+    this.isDiscovering = false;
+    this.isConnected = false;
+    this.isWifiDirectOn = false;
+
+    this.localDeviceAddress = null;
+    this.localDeviceName = null;
+
+    this._eventEmitter = null;
+    this._eventSubs = [];
+
+    this._socketEmitter = null;
+    this._socketSubs = [];
+
+    this._isGroupOwner = false;
+    this._groupOwnerAddress = null;
+    this._socketConnected = false;
+
+    this._pendingConnections = new Set();
+    this._discoveryTimer = null;
+    this._lastDiscoveryAt = 0;
+    this._tiebreakToken = Math.random();
+
+    this._sosDeviceName = null;
+    this.onStateChanged = null;
+
+    this._trustedPeer = false;
+    this._handshakeSent = false;
+    this._handshakeAcked = false;
+    this._handshakeTimer = null;
+
+    this._currentConnectedAddress = null;
+
+    // NEW
+    this.rejectedPeers = new Map(); // address -> timestamp
+    this.trustedPeerAddresses = new Set();
+
+    console.log(`${TAG} constructed`);
+    console.log(`${TAG} Native module available: ${!!WifiDirectModule}`);
+    console.log(`${TAG} Socket module available: ${!!WifiDirectSocketModule}`);
   }
 
-  async initialize() {
-    this._initCount++;
-    console.log(`${TAG} ══════════════════════════════════`);
-    console.log(`${TAG} ── initialize() call #${this._initCount} ──`);
-    console.log(`${TAG}   isInitialized=${this.isInitialized} WifiDirectModule=${!!WifiDirectModule}`);
+  async initialize(force = false) {
+    console.log(`${TAG} ══════════════════════════════════════`);
+    console.log(`${TAG} initialize(force=${force})`);
+    console.log(`${TAG} ══════════════════════════════════════`);
+
+    if (Platform.OS !== 'android') {
+      console.warn(`${TAG} Wi-Fi Direct only supported on Android`);
+      return false;
+    }
 
     if (!WifiDirectModule) {
-      console.warn(`${TAG}   ⚠️ WifiDirectModule not available — module not linked?`);
+      console.error(`${TAG} WifiDirectModule is missing`);
       return false;
     }
-    if (Platform.OS !== 'android') {
-      console.warn(`${TAG}   ⚠️ WiFi Direct only supported on Android`);
-      return false;
-    }
-    if (this.isInitialized) {
-      console.warn(`${TAG}   ⚠️ already initialized — skipping`);
+
+    if (this.isInitialized && !force) {
+      console.log(`${TAG} already initialized`);
       return true;
     }
 
     try {
-      console.log(`${TAG}   calling WifiDirectModule.initialize()...`);
+      if (force) {
+        this._removeAllEventSubs();
+      }
+
       await WifiDirectModule.initialize();
-      console.log(`${TAG}   ✅ WifiDirectModule.initialize() resolved`);
+      console.log(`${TAG} native initialize() resolved`);
 
       this.isInitialized = true;
-      this.eventEmitter  = new NativeEventEmitter(WifiDirectModule);
-      console.log(`${TAG}   ✅ NativeEventEmitter created`);
 
-      this.eventSubscriptions = [
+      this._sosDeviceName = `SOS_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      console.log(`${TAG} generated local SOS name ${this._sosDeviceName}`);
 
-        this.eventEmitter.addListener('WifiDirectPeersFound', (peers) => {
-          console.log(`${TAG} ◀ EVENT WifiDirectPeersFound — ${peers?.length ?? 0} peers`);
-          if (!peers || peers.length === 0) {
-            console.log(`${TAG}   (empty peer list received)`);
-          }
-          this._handlePeersFound(peers || []);
-        }),
+      try {
+        await WifiDirectModule.setDeviceName(this._sosDeviceName);
+        console.log(`${TAG} setDeviceName resolved`);
+      } catch (e) {
+        console.warn(`${TAG} setDeviceName warning: ${e?.message}`);
+      }
 
-        this.eventEmitter.addListener('WifiDirectConnected', (info) => {
-          console.log(`${TAG} ◀ EVENT WifiDirectConnected`);
-          console.log(`${TAG}   info: ${JSON.stringify(info)}`);
-          this._handleConnected(info);
-        }),
+      this._attachP2PEvents();
+      this._attachSocketEvents();
 
-        this.eventEmitter.addListener('WifiDirectDisconnected', () => {
-          console.log(`${TAG} ◀ EVENT WifiDirectDisconnected`);
-          console.log(`${TAG}   wasConnected=${this.isConnected} connectedDevices=${this.connectedDevices.size}`);
-          this._handleDisconnected();
-        }),
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-        this.eventEmitter.addListener('WifiDirectThisDeviceChanged', (info) => {
-          console.log(`${TAG} ◀ EVENT WifiDirectThisDeviceChanged`);
-          console.log(`${TAG}   info: ${JSON.stringify(info)}`);
-          if (info?.deviceAddress) {
-            const prev = this.localDeviceAddress;
-            this.localDeviceAddress = info.deviceAddress;
-            console.log(`${TAG}   localDeviceAddress: ${prev} → ${this.localDeviceAddress}`);
-          } else {
-            console.warn(`${TAG}   ⚠️ no deviceAddress in event`);
-          }
-        }),
-
-        this.eventEmitter.addListener('WifiDirectStateChanged', (enabled) => {
-          console.log(`${TAG} ◀ EVENT WifiDirectStateChanged: ${enabled ? 'ENABLED' : 'DISABLED'}`);
-          console.log(`${TAG}   previous isWifiDirectOn=${this.isWifiDirectOn}`);
-          console.log(`${TAG}   isDiscovering=${this.isDiscovering} isConnected=${this.isConnected}`);
-          console.log(`${TAG}   devices=${this.devices.size} pendingConnections=${this.pendingConnections.size}`);
-
-          this.isWifiDirectOn = enabled;
-
-          if (!enabled) {
-            console.log(`${TAG}   WiFi Direct turned OFF — clearing all state`);
-            this.devices.clear();
-            this.connectedDevices.clear();
-            this.pendingConnections.clear();
-            this.isDiscovering = false;
-            this.isConnected   = false;
-            this.notifyListeners();
-          } else {
-            console.log(`${TAG}   WiFi Direct turned ON — ready for discovery`);
-          }
-
-          if (this.onStateChanged) {
-            console.log(`${TAG}   calling onStateChanged(${enabled})`);
-            this.onStateChanged(enabled);
-          } else {
-            console.warn(`${TAG}   ⚠️ onStateChanged is null — ConnectionManager not wired up yet?`);
-          }
-        }),
-
-        this.eventEmitter.addListener('WifiDirectError', (error) => {
-          console.error(`${TAG} ◀ EVENT WifiDirectError: ${JSON.stringify(error)}`);
-        }),
-      ];
-
-      console.log(`${TAG}   ✅ ${this.eventSubscriptions.length} event listeners registered`);
-      console.log(`${TAG} ── initialize() done ──`);
-      console.log(`${TAG} ══════════════════════════════════`);
+      console.log(`${TAG} init complete stats=`, this.getStats());
       return true;
-    } catch (error) {
-      console.error(`${TAG}   ❌ initialize() threw: ${error.message}`);
-      console.error(`${TAG}   code=${error.code} full:`, error);
+    } catch (e) {
+      console.error(`${TAG} initialize failed: ${e?.message}`, e);
       return false;
     }
   }
 
-  _handlePeersFound(peers) {
-    console.log(`${TAG} ── _handlePeersFound: ${peers.length} peers ──`);
-    console.log(`${TAG}   localDeviceAddress=${this.localDeviceAddress}`);
-    peers.forEach((p, i) => {
-      console.log(`${TAG}   [${i}] name=${p.deviceName} addr=${p.deviceAddress} status=${p.status} (0=connected,1=invited,2=failed,3=available,4=unavailable)`);
-    });
+  _attachP2PEvents() {
+    if (!this._eventEmitter) {
+      this._eventEmitter = new NativeEventEmitter(WifiDirectModule);
+    }
 
-    const currentAddresses = new Set(peers.map(p => p.deviceAddress));
+    this._eventSubs.push(
+      this._eventEmitter.addListener('WifiDirectStateChanged', enabled => {
+        console.log(`${TAG} EVENT WifiDirectStateChanged enabled=${enabled}`);
+        this.isWifiDirectOn = !!enabled;
+
+        if (this.onStateChanged) {
+          try {
+            this.onStateChanged(this.isWifiDirectOn);
+          } catch (e) {
+            console.error(`${TAG} onStateChanged callback error`, e);
+          }
+        }
+      })
+    );
+
+    this._eventSubs.push(
+      this._eventEmitter.addListener('WifiDirectThisDeviceChanged', info => {
+        console.log(`${TAG} EVENT WifiDirectThisDeviceChanged`, info);
+        this.localDeviceAddress = info?.deviceAddress || null;
+        this.localDeviceName = info?.deviceName || null;
+      })
+    );
+
+    this._eventSubs.push(
+      this._eventEmitter.addListener('WifiDirectPeersFound', peers => {
+        console.log(`${TAG} EVENT WifiDirectPeersFound count=${peers?.length ?? 0}`);
+        this._handlePeersFound(peers || []);
+      })
+    );
+
+    this._eventSubs.push(
+      this._eventEmitter.addListener('WifiDirectConnected', info => {
+        console.log(`${TAG} EVENT WifiDirectConnected`, info);
+        this._handleConnected(info || {});
+      })
+    );
+
+    this._eventSubs.push(
+      this._eventEmitter.addListener('WifiDirectDisconnected', () => {
+        console.log(`${TAG} EVENT WifiDirectDisconnected`);
+        this._handleDisconnected();
+      })
+    );
+
+    this._eventSubs.push(
+      this._eventEmitter.addListener('WifiDirectError', err => {
+        console.error(`${TAG} EVENT WifiDirectError`, err);
+      })
+    );
+
+    console.log(`${TAG} attached ${this._eventSubs.length} P2P event listeners`);
+  }
+
+  _attachSocketEvents() {
+    if (!WifiDirectSocketModule) {
+      console.warn(`${TAG} WifiDirectSocketModule missing`);
+      return;
+    }
+
+    if (!this._socketEmitter) {
+      this._socketEmitter = new NativeEventEmitter(WifiDirectSocketModule);
+    }
+
+    this._socketSubs.push(
+      this._socketEmitter.addListener('WifiDirectSocketConnected', info => {
+        console.log(`${STAG} EVENT WifiDirectSocketConnected`, info);
+        this._socketConnected = true;
+        this._currentConnectedAddress = info?.remoteAddress || this._currentConnectedAddress;
+        this._startHandshake();
+      })
+    );
+
+    this._socketSubs.push(
+      this._socketEmitter.addListener('WifiDirectSocketDisconnected', info => {
+        console.warn(`${STAG} EVENT WifiDirectSocketDisconnected`, info);
+        this._socketConnected = false;
+        this._trustedPeer = false;
+        this._handshakeSent = false;
+        this._handshakeAcked = false;
+        this._clearHandshakeTimer();
+      })
+    );
+
+    this._socketSubs.push(
+      this._socketEmitter.addListener('WifiDirectDataReceived', info => {
+        const raw = info?.data;
+        const remoteAddress = info?.remoteAddress || null;
+
+        if (remoteAddress) {
+          this._currentConnectedAddress = remoteAddress;
+        }
+
+        console.log(
+          `${STAG} EVENT WifiDirectDataReceived from=${remoteAddress} len=${raw?.length}`
+        );
+        console.log(`${STAG} payload preview=${String(raw || '').slice(0, 120)}`);
+
+        const handledByHandshake = this._maybeHandleHandshakeMessage(raw, remoteAddress);
+
+        if (handledByHandshake) {
+          return;
+        }
+
+        if (!this._trustedPeer) {
+          console.warn(`${STAG} Ignoring app payload because peer is not trusted yet`);
+          return;
+        }
+
+        this.messageListeners.forEach(cb => {
+          try {
+            cb(raw);
+          } catch (e) {
+            console.error(`${STAG} message listener error`, e);
+          }
+        });
+      })
+    );
+
+    this._socketSubs.push(
+      this._socketEmitter.addListener('WifiDirectSocketError', err => {
+        console.error(`${STAG} EVENT WifiDirectSocketError`, err);
+      })
+    );
+
+    console.log(`${TAG} attached ${this._socketSubs.length} socket listeners`);
+  }
+
+  _removeAllEventSubs() {
+    this._eventSubs.forEach(s => s.remove());
+    this._eventSubs = [];
+
+    this._socketSubs.forEach(s => s.remove());
+    this._socketSubs = [];
+  }
+
+  _cleanupRejectedPeers() {
+    const now = Date.now();
     let removed = 0;
-    for (const [address] of this.devices.entries()) {
-      if (!currentAddresses.has(address) && !this.connectedDevices.has(address)) {
-        console.log(`${TAG}   🗑️ removing stale device: ${address}`);
-        this.devices.delete(address);
+
+    for (const [addr, ts] of this.rejectedPeers.entries()) {
+      if (now - ts > REJECT_COOLDOWN_MS) {
+        this.rejectedPeers.delete(addr);
         removed++;
       }
     }
-    if (removed > 0) console.log(`${TAG}   removed ${removed} stale devices`);
 
-    peers.forEach(peer => {
-      const isConnected = peer.status === 0;
-      const isInvited   = peer.status === 1;
-      const isFailed    = peer.status === 2;
-      const isAvailable = peer.status === 3;
-      const isUnavailable = peer.status === 4;
-
-      console.log(`${TAG}   processing ${peer.deviceAddress} (${peer.deviceName}): isConnected=${isConnected} isInvited=${isInvited} isFailed=${isFailed} isAvailable=${isAvailable} isUnavailable=${isUnavailable}`);
-
-      const deviceInfo = {
-        id:         peer.deviceAddress,
-        name:       peer.deviceName || `P2P_${peer.deviceAddress.slice(-5)}`,
-        address:    peer.deviceAddress,
-        peerStatus: peer.status,
-        isConnected,
-        transport:  'wifi-direct',
-        rssi:       -65,
-        distance:   20,
-        lastSeen:   Date.now(),
-      };
-
-      this.devices.set(peer.deviceAddress, deviceInfo);
-
-      if (isConnected) {
-        console.log(`${TAG}   ✅ marking ${peer.deviceAddress} as connected`);
-        this.connectedDevices.set(peer.deviceAddress, deviceInfo);
-        this.pendingConnections.delete(peer.deviceAddress);
-      }
-
-      if (isFailed) {
-        console.warn(`${TAG}   ⚠️ peer ${peer.deviceAddress} is in FAILED state`);
-      }
-
-      if (
-        isAvailable &&
-        !this.connectedDevices.has(peer.deviceAddress) &&
-        !this.pendingConnections.has(peer.deviceAddress)
-      ) {
-        // Android 10+ always reports localDeviceAddress as 02:00:00:00:00:00 (privacy mask),
-        // so address comparison fails — both phones get the same result and either both
-        // connect or neither does.  Use _tiebreakToken (a random float set at construction)
-        // instead: one phone will be < 0.5, the other (statistically) > 0.5.
-        const isMaskedAddr = this.localDeviceAddress === '02:00:00:00:00:00' || !this.localDeviceAddress;
-        const shouldInitiate = isMaskedAddr
-          ? this._tiebreakToken < 0.5
-          : this.localDeviceAddress < peer.deviceAddress;
-
-        console.log(`${TAG}   tie-breaker: isMaskedAddr=${isMaskedAddr} token=${this._tiebreakToken.toFixed(4)} shouldInitiate=${shouldInitiate}`);
-
-        if (shouldInitiate) {
-          console.log(`${TAG}   → we initiate connection to ${peer.deviceAddress}`);
-          this._connectToDevice(peer.deviceAddress);
-        } else {
-          console.log(`${TAG}   → waiting for peer ${peer.deviceAddress} to initiate (6s fallback)`);
-          setTimeout(() => {
-            const current = this.devices.get(peer.deviceAddress);
-            const stillAvailable = current?.peerStatus === 3;
-            const alreadyConnected = this.isConnected || this.connectedDevices.has(peer.deviceAddress);
-            const pending = this.pendingConnections.has(peer.deviceAddress);
-            console.log(`${TAG}   [6s fallback] addr=${peer.deviceAddress} stillAvailable=${stillAvailable} alreadyConnected=${alreadyConnected} pending=${pending}`);
-            if (stillAvailable && !alreadyConnected && !pending) {
-              console.log(`${TAG}   [6s fallback] → peer didn't initiate — we try now`);
-              this._connectToDevice(peer.deviceAddress);
-            } else {
-              console.log(`${TAG}   [6s fallback] → no action needed`);
-            }
-          }, 6000);
-        }
-      }
-    });
-
-    console.log(`${TAG}   devices map size: ${this.devices.size} | connectedDevices: ${this.connectedDevices.size} | pending: ${this.pendingConnections.size}`);
-    this.notifyListeners();
+    if (removed > 0) {
+      console.log(`${TAG} cleaned up ${removed} expired rejected peers`);
+    }
   }
 
-  _handleConnected(info) {
-    console.log(`${TAG} ── _handleConnected ──`);
-    console.log(`${TAG}   groupFormed=${info?.groupFormed} isGroupOwner=${info?.isGroupOwner} groupOwnerAddress=${info?.groupOwnerAddress}`);
-    this.isConnected = true;
+  _isRejected(address) {
+    if (!address) return false;
+    this._cleanupRejectedPeers();
+    return this.rejectedPeers.has(address);
+  }
 
-    console.log(`${TAG}   calling WifiDirectModule.requestPeers() to confirm who connected...`);
-    WifiDirectModule.requestPeers()
-      .then(peers => {
-        console.log(`${TAG}   requestPeers after connect: ${peers.length} peers`);
-        peers.forEach((peer, i) => {
-          console.log(`${TAG}     [${i}] name=${peer.deviceName} addr=${peer.deviceAddress} status=${peer.status}`);
-          if (peer.status === 0) {
-            const existing = this.devices.get(peer.deviceAddress);
-            console.log(`${TAG}     → connected peer ${peer.deviceAddress} existing=${!!existing}`);
-            if (existing) {
-              const updated = { ...existing, isConnected: true, peerStatus: 0 };
-              this.devices.set(peer.deviceAddress, updated);
-              this.connectedDevices.set(peer.deviceAddress, updated);
-              console.log(`${TAG}     ✅ updated ${peer.deviceAddress} as connected`);
-            } else {
-              console.warn(`${TAG}     ⚠️ connected peer ${peer.deviceAddress} not in devices map — adding fresh`);
-              const fresh = {
-                id: peer.deviceAddress, name: peer.deviceName || `P2P_${peer.deviceAddress.slice(-5)}`,
-                address: peer.deviceAddress, peerStatus: 0, isConnected: true,
-                transport: 'wifi-direct', rssi: -65, distance: 20, lastSeen: Date.now(),
-              };
-              this.devices.set(peer.deviceAddress, fresh);
-              this.connectedDevices.set(peer.deviceAddress, fresh);
-            }
-          }
-        });
-        console.log(`${TAG}   connectedDevices after update: ${this.connectedDevices.size}`);
-        this.notifyListeners();
-      })
-      .catch((err) => {
-        console.error(`${TAG}   ❌ requestPeers after connect failed: ${err.message}`);
-        console.log(`${TAG}   falling back to marking peerStatus=0 devices as connected`);
-        let fallbackCount = 0;
-        for (const [address, device] of this.devices.entries()) {
-          if (device.peerStatus === 0) {
-            const updated = { ...device, isConnected: true };
-            this.devices.set(address, updated);
-            this.connectedDevices.set(address, updated);
-            fallbackCount++;
-          }
-        }
-        console.log(`${TAG}   fallback marked ${fallbackCount} devices as connected`);
-        this.notifyListeners();
+  _rejectPeer(address, reason = 'unknown') {
+    if (!address) return;
+
+    console.warn(`${TAG} rejecting peer ${address} reason=${reason}`);
+    this.rejectedPeers.set(address, Date.now());
+    this.trustedPeerAddresses.delete(address);
+
+    const existing = this.devices.get(address);
+    if (existing) {
+      this.devices.set(address, {
+        ...existing,
+        trusted: false,
+        rejected: true,
+        rejectedReason: reason,
       });
-  }
-
-  _handleDisconnected() {
-    console.log(`${TAG} ── _handleDisconnected ──`);
-    console.log(`${TAG}   connectedDevices=${this.connectedDevices.size} pendingConnections=${this.pendingConnections.size}`);
-    this.isConnected = false;
-    this.connectedDevices.clear();
-    this.pendingConnections.clear();
-
-    let updated = 0;
-    for (const [address, device] of this.devices.entries()) {
-      this.devices.set(address, { ...device, isConnected: false, peerStatus: 3 });
-      updated++;
     }
-    console.log(`${TAG}   reset ${updated} devices to available (peerStatus=3)`);
+
+    this.connectedDevices.delete(address);
     this.notifyListeners();
   }
 
-  async _connectToDevice(deviceAddress) {
-    console.log(`${TAG} ── _connectToDevice: ${deviceAddress}`);
-    console.log(`${TAG}   isInitialized=${this.isInitialized}`);
-    console.log(`${TAG}   alreadyConnected=${this.connectedDevices.has(deviceAddress)}`);
-    console.log(`${TAG}   pending=${this.pendingConnections.has(deviceAddress)}`);
-    console.log(`${TAG}   isConnected(global)=${this.isConnected}`);
-    console.log(`${TAG}   total pendingConnections: ${[...this.pendingConnections].join(', ') || 'none'}`);
+  async startDiscovery() {
+    console.log(`${TAG} ══════════════════════════════════════`);
+    console.log(`${TAG} startDiscovery()`);
+    console.log(`${TAG} isInitialized=${this.isInitialized}`);
+    console.log(`${TAG} isWifiDirectOn=${this.isWifiDirectOn}`);
+    console.log(`${TAG} isDiscovering=${this.isDiscovering}`);
+    console.log(`${TAG} ══════════════════════════════════════`);
 
     if (!this.isInitialized) {
-      console.warn(`${TAG}   ⚠️ not initialized — aborting`);
-      return;
+      console.warn(`${TAG} not initialized`);
+      return false;
     }
-    if (this.connectedDevices.has(deviceAddress)) {
-      console.warn(`${TAG}   ⚠️ already in connectedDevices — skipping`);
-      return;
-    }
-    if (this.pendingConnections.has(deviceAddress)) {
-      console.warn(`${TAG}   ⚠️ already pending — skipping`);
-      return;
+
+    const locationEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
+    console.log(`${TAG} location services enabled=${locationEnabled}`);
+
+    if (Platform.Version >= 29 && !locationEnabled) {
+      Alert.alert(
+        'Location Required',
+        'Turn on device location. Wi-Fi Direct discovery often fails on Android 10+ if location is off.'
+      );
+      console.warn(`${TAG} location is OFF, discovery likely to fail`);
+      return false;
     }
 
     try {
-      this.pendingConnections.add(deviceAddress);
-      console.log(`${TAG}   calling WifiDirectModule.connectToDevice(${deviceAddress})...`);
-      await WifiDirectModule.connectToDevice(deviceAddress);
-      console.log(`${TAG}   ✅ connectToDevice call resolved (invite sent, waiting for WifiDirectConnected event)`);
-    } catch (error) {
-      console.error(`${TAG}   ❌ connectToDevice(${deviceAddress}) threw: ${error.message}`);
-      console.error(`${TAG}   code=${error.code} full:`, error);
-      this.pendingConnections.delete(deviceAddress);
-      console.log(`${TAG}   removed ${deviceAddress} from pendingConnections`);
-    }
-  }
-
-  async startDiscovery(retryCount = 0) {
-    console.log(`${TAG} ── startDiscovery() retryCount=${retryCount}`);
-    console.log(`${TAG}   isInitialized=${this.isInitialized} isDiscovering=${this.isDiscovering} _discoveryPending=${this._discoveryPending} isWifiDirectOn=${this.isWifiDirectOn}`);
-    console.log(`${TAG}   WifiDirectModule=${!!WifiDirectModule}`);
-
-    if (!this.isInitialized) {
-      console.warn(`${TAG}   ⚠️ not initialized — aborting`);
-      return;
-    }
-    if (this.isDiscovering || this._discoveryPending) {
-      console.warn(`${TAG}   ⚠️ already discovering or pending — aborting`);
-      return;
-    }
-    if (!this.isWifiDirectOn) {
-      console.warn(`${TAG}   ⚠️ Wi-Fi Direct not yet ON — cannot start discovery`);
-      console.warn(`${TAG}   Waiting for WifiDirectStateChanged(true) event to trigger discovery`);
-      return;
-    }
-
-    // Claim the slot synchronously BEFORE any await to prevent two concurrent
-    // callers both passing the guard above and racing into discoverPeers().
-    this._discoveryPending = true;
-
-    // On Android 10-12, discoverPeers() requires location services to be ON.
-    // On Android 13+ with NEARBY_WIFI_DEVICES + neverForLocation this is not needed,
-    // but we still log the state so we can see what's happening.
-    try {
-      const locationServicesOn = await Location.hasServicesEnabledAsync();
-      console.log(`${TAG}   location services enabled: ${locationServicesOn} (Android SDK ${Platform.Version})`);
-      if (!locationServicesOn && Platform.Version < 33) {
-        console.error(`${TAG}   ❌ Location services are OFF — discoverPeers() will fail on Android <13`);
-        console.error(`${TAG}   Ask user to enable location services and retry`);
-        this._discoveryPending = false;
-        // Retry every 5s while location is off
-        setTimeout(() => {
-          if (!this.isDiscovering && !this._discoveryPending) {
-            console.log(`${TAG}   [location retry] rechecking...`);
-            this.startDiscovery(retryCount);
-          }
-        }, 5000);
-        return;
-      }
+      const nativeWifiEnabled = await WifiDirectModule.isWifiEnabled();
+      console.log(`${TAG} native isWifiEnabled=${nativeWifiEnabled}`);
     } catch (e) {
-      console.warn(`${TAG}   could not check location services: ${e.message}`);
+      console.warn(`${TAG} failed to read native wifi state: ${e?.message}`);
     }
-    console.log(`${TAG}   calling WifiDirectModule.discoverPeers()...`);
 
     try {
       await WifiDirectModule.discoverPeers();
-      this.isDiscovering     = true;
-      this._discoveryPending = false;
-      console.log(`${TAG}   ✅ discovery started`);
-    } catch (error) {
-      console.error(`${TAG}   ❌ discoverPeers() threw (attempt ${retryCount + 1}): ${error.message}`);
-      console.error(`${TAG}   code=${error.code}`);
-      this.isDiscovering     = false;
-      this._discoveryPending = false;
+      this.isDiscovering = true;
+      this._lastDiscoveryAt = Date.now();
+      console.log(`${TAG} discoverPeers() success`);
 
-      const isError0 = error.message?.includes('ERROR(0)') || error.code === 'DISCOVERY_FAILED';
+      if (this._discoveryTimer) clearInterval(this._discoveryTimer);
+      this._discoveryTimer = setInterval(() => {
+        if (!this.isDiscovering) return;
+        this._cleanupRejectedPeers();
+        const elapsed = Math.round((Date.now() - this._lastDiscoveryAt) / 1000);
+        console.log(
+          `${TAG} still discovering... ${elapsed}s devices=${this.getDevices().length} connected=${this.connectedDevices.size} rejected=${this.rejectedPeers.size}`
+        );
+      }, 5000);
 
-      if (isError0) {
-        // ERROR(0) = WifiP2pManager.ERROR
-        // On Samsung Android 13+ this fires even with location ON when the P2P channel
-        // has become stale. Fix: stop any pending discovery, reinitialize the native
-        // channel, then wait 3s for the framework to settle before retrying.
-        console.error(`${TAG}   ⚠️ ERROR(0) detected — WifiP2p channel is stale`);
-        console.error(`${TAG}   → Resetting WifiP2p state + reinitializing channel...`);
-        // stopDiscovery + disconnect (removeGroup) clears the Android WifiP2p system
-        // service state — just recreating the channel object is not enough.
-        try { await WifiDirectModule.stopDiscovery(); } catch (_) {}
-        try { await WifiDirectModule.disconnect();    } catch (_) {}
-        try {
-          await WifiDirectModule.initialize();
-          console.log(`${TAG}   ✅ channel reinitialized`);
-        } catch (reinitErr) {
-          console.error(`${TAG}   ❌ reinitialize also failed: ${reinitErr.message}`);
-        }
-        // Give the Android WifiP2p framework time to settle after full reset
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-
-      if (retryCount < 3) {
-        const delay = isError0 ? 1000 : (retryCount + 1) * 2000;
-        console.log(`${TAG}   retrying in ${delay}ms... (attempt ${retryCount + 2} of 4)`);
-        setTimeout(() => this.startDiscovery(retryCount + 1), delay);
-      } else {
-        console.error(`${TAG}   💀 all 4 discovery attempts exhausted`);
-        console.log(`${TAG}   scheduling background retry every 15s...`);
-        const retryTimer = setInterval(() => {
-          if (!this.isWifiDirectOn) {
-            console.log(`${TAG}   [bg retry] WiFi Direct off — clearing timer`);
-            clearInterval(retryTimer);
-            return;
-          }
-          if (!this.isDiscovering && !this._discoveryPending) {
-            console.log(`${TAG}   [bg retry] attempting discovery again (full reset first)`);
-            clearInterval(retryTimer);
-            Promise.resolve()
-              .then(() => WifiDirectModule.stopDiscovery().catch(() => {}))
-              .then(() => WifiDirectModule.disconnect().catch(() => {}))
-              .then(() => WifiDirectModule.initialize())
-              .then(() => new Promise(r => setTimeout(r, 3000)))
-              .then(() => this.startDiscovery(0))
-              .catch(e => {
-                console.error(`${TAG}   [bg retry] reset failed: ${e.message}`);
-                this.startDiscovery(0);
-              });
-          }
-        }, 15000);
-      }
+      return true;
+    } catch (e) {
+      this.isDiscovering = false;
+      console.error(`${TAG} startDiscovery failed: ${e?.message}`, e);
+      return false;
     }
   }
 
   async stopDiscovery() {
-    console.log(`${TAG} ── stopDiscovery() — isInitialized=${this.isInitialized} isDiscovering=${this.isDiscovering}`);
-    if (!this.isInitialized) {
-      console.log(`${TAG}   not initialized — nothing to stop`);
-      return;
+    console.log(`${TAG} stopDiscovery()`);
+    this.isDiscovering = false;
+
+    if (this._discoveryTimer) {
+      clearInterval(this._discoveryTimer);
+      this._discoveryTimer = null;
     }
+
     try {
       await WifiDirectModule.stopDiscovery();
-      console.log(`${TAG}   ✅ stopDiscovery success`);
+      console.log(`${TAG} stopDiscovery native resolved`);
     } catch (e) {
-      console.error(`${TAG}   ❌ stopDiscovery threw: ${e.message} (code=${e.code})`);
+      console.warn(`${TAG} stopDiscovery warning: ${e?.message}`);
     }
-    this.isDiscovering     = false;
-    this._discoveryPending = false;
+  }
+
+  _handlePeersFound(peers) {
+    this._cleanupRejectedPeers();
+
+    console.log(`${TAG} ══════════════════════════════════════`);
+    console.log(`${TAG} _handlePeersFound count=${peers.length}`);
+    console.log(`${TAG} localAddress=${this.localDeviceAddress}`);
+    console.log(`${TAG} localName=${this.localDeviceName}`);
+    console.log(`${TAG} rejectedPeers=${this.rejectedPeers.size}`);
+    console.log(`${TAG} ══════════════════════════════════════`);
+
+    peers.forEach((peer, index) => {
+      console.log(
+        `${TAG} peer[${index}] name=${peer?.deviceName} address=${peer?.deviceAddress} status=${peer?.status}`
+      );
+    });
+
+    const incomingAddresses = new Set();
+
+    peers.forEach(peer => {
+      const address = peer?.deviceAddress;
+      const name = peer?.deviceName || 'UNKNOWN';
+      const status = peer?.status;
+
+      if (!address) {
+        console.warn(`${TAG} peer missing address`, peer);
+        return;
+      }
+
+      incomingAddresses.add(address);
+
+      const trusted = this.trustedPeerAddresses.has(address);
+      const rejected = this._isRejected(address);
+
+      const device = {
+        id: address,
+        name,
+        address,
+        peerStatus: status,
+        isConnected: status === 0,
+        transport: 'wifi-direct',
+        trusted,
+        rejected,
+        lastSeen: Date.now(),
+      };
+
+      console.log(
+        `${TAG} peer name=${name} address=${address} status=${status} connected=${device.isConnected} trusted=${trusted} rejected=${rejected}`
+      );
+
+      this.devices.set(address, device);
+
+      if (device.isConnected) {
+        this.connectedDevices.set(address, device);
+        this._pendingConnections.delete(address);
+      }
+    });
+
+    for (const [addr, dev] of this.devices.entries()) {
+      if (!incomingAddresses.has(addr) && !dev.isConnected) {
+        console.log(`${TAG} removing stale peer ${addr}`);
+        this.devices.delete(addr);
+      }
+    }
+
+    this.notifyListeners();
+
+    const availablePeers = peers.filter(p => {
+      const address = p?.deviceAddress;
+      return p?.status === 3 && address && !this._isRejected(address);
+    });
+
+    if (availablePeers.length > 0) {
+      this._maybeAutoConnect(availablePeers);
+    } else {
+      console.log(`${TAG} no AVAILABLE non-rejected peers to auto-connect right now`);
+    }
+  }
+
+  async _maybeAutoConnect(availablePeers) {
+    if (this.isConnected) {
+      console.log(`${TAG} already connected, skipping auto-connect`);
+      return;
+    }
+
+    const peer = availablePeers[0];
+    const peerAddress = peer.deviceAddress;
+
+    if (this._isRejected(peerAddress)) {
+      console.log(`${TAG} peer ${peerAddress} is currently rejected, skipping`);
+      return;
+    }
+
+    if (this._pendingConnections.has(peerAddress)) {
+      console.log(`${TAG} connection already pending for ${peerAddress}`);
+      return;
+    }
+
+    const localAddr = this.localDeviceAddress;
+    const canCompare = localAddr && localAddr !== '02:00:00:00:00:00';
+    const shouldInitiate = canCompare ? localAddr < peerAddress : this._tiebreakToken < 0.5;
+
+    console.log(`${TAG} auto-connect decision`);
+    console.log(`${TAG} localAddr=${localAddr}`);
+    console.log(`${TAG} peerAddr=${peerAddress}`);
+    console.log(`${TAG} canCompare=${canCompare}`);
+    console.log(`${TAG} tiebreakToken=${this._tiebreakToken}`);
+    console.log(`${TAG} shouldInitiate=${shouldInitiate}`);
+
+    if (!shouldInitiate) {
+      console.log(`${TAG} waiting for peer to initiate first`);
+      return;
+    }
+
+    try {
+      this._pendingConnections.add(peerAddress);
+      console.log(`${TAG} calling connectToDevice(${peerAddress})`);
+      await WifiDirectModule.connectToDevice(peerAddress);
+      console.log(`${TAG} connectToDevice invitation sent`);
+    } catch (e) {
+      this._pendingConnections.delete(peerAddress);
+      console.error(`${TAG} connectToDevice failed: ${e?.message}`, e);
+    }
+  }
+
+  async _handleConnected(info) {
+    console.log(`${TAG} ══════════════════════════════════════`);
+    console.log(`${TAG} _handleConnected`);
+    console.log(`${TAG} groupFormed=${info?.groupFormed}`);
+    console.log(`${TAG} isGroupOwner=${info?.isGroupOwner}`);
+    console.log(`${TAG} groupOwnerAddress=${info?.groupOwnerAddress}`);
+    console.log(`${TAG} ══════════════════════════════════════`);
+
+    this.isConnected = true;
+    this.isDiscovering = false;
+    this._isGroupOwner = !!info?.isGroupOwner;
+    this._groupOwnerAddress = info?.groupOwnerAddress || null;
+    this._trustedPeer = false;
+    this._handshakeSent = false;
+    this._handshakeAcked = false;
+    this._clearHandshakeTimer();
+
+    if (this._discoveryTimer) {
+      clearInterval(this._discoveryTimer);
+      this._discoveryTimer = null;
+    }
+
+    try {
+      const peers = await WifiDirectModule.requestPeers();
+      console.log(`${TAG} requestPeers after connect returned ${peers?.length ?? 0} peers`);
+
+      (peers || []).forEach(peer => {
+        if (peer.status === 0) {
+          const updated = {
+            id: peer.deviceAddress,
+            name: peer.deviceName,
+            address: peer.deviceAddress,
+            peerStatus: peer.status,
+            isConnected: true,
+            transport: 'wifi-direct',
+            trusted: this.trustedPeerAddresses.has(peer.deviceAddress),
+            rejected: this._isRejected(peer.deviceAddress),
+            lastSeen: Date.now(),
+          };
+          this.devices.set(peer.deviceAddress, updated);
+          this.connectedDevices.set(peer.deviceAddress, updated);
+          this._currentConnectedAddress = peer.deviceAddress;
+        }
+      });
+    } catch (e) {
+      console.warn(`${TAG} requestPeers after connect failed: ${e?.message}`);
+    }
+
+    this.notifyListeners();
+    await this._setupSocket();
+  }
+
+  async _setupSocket() {
+    console.log(`${STAG} ══════════════════════════════════════`);
+    console.log(`${STAG} _setupSocket()`);
+    console.log(`${STAG} isGroupOwner=${this._isGroupOwner}`);
+    console.log(`${STAG} groupOwnerAddress=${this._groupOwnerAddress}`);
+    console.log(`${STAG} socketModuleAvailable=${!!WifiDirectSocketModule}`);
+    console.log(`${STAG} ══════════════════════════════════════`);
+
+    if (!WifiDirectSocketModule) {
+      console.warn(`${STAG} socket module unavailable`);
+      return;
+    }
+
+    try {
+      if (this._isGroupOwner) {
+        console.log(`${STAG} starting TCP server as Group Owner`);
+        await WifiDirectSocketModule.startServer();
+        console.log(`${STAG} startServer() resolved`);
+      } else if (this._groupOwnerAddress) {
+        console.log(`${STAG} connecting TCP socket to GO ${this._groupOwnerAddress}:8989`);
+        this._currentConnectedAddress = this._groupOwnerAddress;
+        await WifiDirectSocketModule.connectSocket(this._groupOwnerAddress);
+        console.log(`${STAG} connectSocket() resolved`);
+      } else {
+        console.warn(`${STAG} no group owner address available`);
+      }
+    } catch (e) {
+      console.error(`${STAG} _setupSocket failed: ${e?.message}`, e);
+    }
+  }
+
+  _startHandshake() {
+    console.log(`${STAG} _startHandshake() socketConnected=${this._socketConnected}`);
+
+    if (!this._socketConnected) {
+      console.warn(`${STAG} cannot start handshake: socket not connected`);
+      return;
+    }
+
+    this._clearHandshakeTimer();
+
+    this._handshakeSent = true;
+    this._handshakeAcked = false;
+    this._trustedPeer = false;
+
+    const hello = {
+      type: 'HELLO',
+      app: APP_ID,
+      version: APP_VERSION,
+      deviceName: this.localDeviceName || this._sosDeviceName || 'UNKNOWN',
+      ts: Date.now(),
+    };
+
+    console.log(`${STAG} sending HELLO`, hello);
+
+    this.sendRaw(JSON.stringify(hello));
+
+    this._handshakeTimer = setTimeout(async () => {
+      if (!this._handshakeAcked) {
+        console.warn(`${STAG} HELLO timeout after ${HANDSHAKE_TIMEOUT_MS}ms — disconnecting`);
+        if (this._currentConnectedAddress) {
+          this._rejectPeer(this._currentConnectedAddress, 'handshake-timeout');
+        }
+        await this.disconnect();
+      }
+    }, HANDSHAKE_TIMEOUT_MS);
+  }
+
+  _clearHandshakeTimer() {
+    if (this._handshakeTimer) {
+      clearTimeout(this._handshakeTimer);
+      this._handshakeTimer = null;
+    }
+  }
+
+  _maybeHandleHandshakeMessage(raw, remoteAddress = null) {
+    let msg;
+
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      return false;
+    }
+
+    if (!msg || !msg.type) {
+      return false;
+    }
+
+    if (msg.type === 'HELLO') {
+      console.log(`${STAG} received HELLO`, msg);
+
+      if (msg.app !== APP_ID) {
+        console.warn(`${STAG} peer is not our app, disconnecting`);
+        if (remoteAddress) {
+          this._rejectPeer(remoteAddress, 'wrong-app-on-hello');
+        }
+        this.disconnect();
+        return true;
+      }
+
+      this._trustedPeer = true;
+
+      if (remoteAddress) {
+        this.trustedPeerAddresses.add(remoteAddress);
+      }
+
+      const ack = {
+        type: 'HELLO_ACK',
+        app: APP_ID,
+        version: APP_VERSION,
+        deviceName: this.localDeviceName || this._sosDeviceName || 'UNKNOWN',
+        ts: Date.now(),
+      };
+
+      console.log(`${STAG} sending HELLO_ACK`, ack);
+      this.sendRaw(JSON.stringify(ack));
+      this._markConnectedPeersTrusted(remoteAddress);
+      return true;
+    }
+
+    if (msg.type === 'HELLO_ACK') {
+      console.log(`${STAG} received HELLO_ACK`, msg);
+
+      if (msg.app !== APP_ID) {
+        console.warn(`${STAG} invalid HELLO_ACK app id, disconnecting`);
+        if (remoteAddress) {
+          this._rejectPeer(remoteAddress, 'wrong-app-on-ack');
+        }
+        this.disconnect();
+        return true;
+      }
+
+      this._handshakeAcked = true;
+      this._trustedPeer = true;
+      this._clearHandshakeTimer();
+
+      if (remoteAddress) {
+        this.trustedPeerAddresses.add(remoteAddress);
+      }
+
+      this._markConnectedPeersTrusted(remoteAddress);
+      console.log(`${STAG} peer trusted ✅`);
+      return true;
+    }
+
+    return false;
+  }
+
+  _markConnectedPeersTrusted(remoteAddress = null) {
+    if (remoteAddress) {
+      this.trustedPeerAddresses.add(remoteAddress);
+    }
+
+    for (const [addr, dev] of this.connectedDevices.entries()) {
+      const updated = { ...dev, trusted: true, rejected: false };
+      this.connectedDevices.set(addr, updated);
+      this.devices.set(addr, updated);
+      this.trustedPeerAddresses.add(addr);
+      this.rejectedPeers.delete(addr);
+    }
+
+    this.notifyListeners();
+  }
+
+  _handleDisconnected() {
+    console.log(`${TAG} ══════════════════════════════════════`);
+    console.log(`${TAG} _handleDisconnected()`);
+    console.log(`${TAG} clearing connected state`);
+    console.log(`${TAG} ══════════════════════════════════════`);
+
+    this.isConnected = false;
+    this._socketConnected = false;
+    this._isGroupOwner = false;
+    this._groupOwnerAddress = null;
+    this._trustedPeer = false;
+    this._handshakeSent = false;
+    this._handshakeAcked = false;
+    this._clearHandshakeTimer();
+
+    this.connectedDevices.clear();
+    this._pendingConnections.clear();
+    this._currentConnectedAddress = null;
+
+    for (const [addr, dev] of this.devices.entries()) {
+      const stillTrusted = this.trustedPeerAddresses.has(addr);
+      const rejected = this._isRejected(addr);
+
+      this.devices.set(addr, {
+        ...dev,
+        isConnected: false,
+        trusted: stillTrusted,
+        rejected,
+      });
+    }
+
+    this.notifyListeners();
   }
 
   async disconnect() {
-    console.log(`${TAG} ── disconnect() — isInitialized=${this.isInitialized} isConnected=${this.isConnected}`);
-    if (!this.isInitialized) {
-      console.log(`${TAG}   not initialized — nothing to disconnect`);
-      return;
+    console.log(`${TAG} disconnect()`);
+
+    try {
+      if (WifiDirectSocketModule) {
+        await WifiDirectSocketModule.closeAll();
+      }
+    } catch (e) {
+      console.warn(`${STAG} closeAll warning: ${e?.message}`);
     }
+
     try {
       await WifiDirectModule.disconnect();
-      console.log(`${TAG}   ✅ disconnect success`);
+      console.log(`${TAG} native disconnect resolved`);
     } catch (e) {
-      console.error(`${TAG}   ❌ disconnect threw: ${e.message}`);
+      console.warn(`${TAG} disconnect warning: ${e?.message}`);
     }
-    this.isConnected = false;
-    this.connectedDevices.clear();
-    this.pendingConnections.clear();
+
+    this._handleDisconnected();
   }
 
-  broadcastData(encodedPayload) {
-    const count = this.connectedDevices.size;
-    console.log(`${TAG} ── broadcastData() — connectedDevices=${count}`);
-    if (count === 0) {
-      console.warn(`${TAG}   ⚠️ no WD connected devices — nothing to broadcast`);
-      return;
+  async sendRaw(data) {
+    console.log(`${STAG} sendRaw len=${data?.length}`);
+    console.log(`${STAG} socketConnected=${this._socketConnected}`);
+    console.log(`${STAG} payloadPreview=${String(data || '').slice(0, 120)}`);
+
+    if (!WifiDirectSocketModule) {
+      console.warn(`${STAG} socket module unavailable`);
+      return false;
     }
-    console.warn(`${TAG}   ⚠️ WifiDirectService.broadcastData() is NOT YET IMPLEMENTED — message dropped`);
-    // TODO: implement socket/TCP broadcast over Wi-Fi Direct group
+
+    try {
+      await WifiDirectSocketModule.sendData(data);
+      console.log(`${STAG} sendRaw resolved`);
+      return true;
+    } catch (e) {
+      console.error(`${STAG} sendRaw failed: ${e?.message}`, e);
+      return false;
+    }
   }
 
+  async sendData(data) {
+    if (!this._trustedPeer) {
+      console.warn(`${STAG} sendData blocked because peer is not trusted yet`);
+      return false;
+    }
+
+    let payload = data;
+
+    if (typeof data !== 'string') {
+      payload = JSON.stringify(data);
+    }
+
+    return this.sendRaw(payload);
+  }
+
+  // NORMAL APP LIST
   getDevices() {
-    return Array.from(this.devices.values());
+    this._cleanupRejectedPeers();
+
+    return Array.from(this.devices.values()).filter(device => {
+      // hide rejected peers from normal app list
+      if (device.rejected || this._isRejected(device.address)) {
+        return false;
+      }
+
+      // show trusted connected peers
+      if (device.trusted) {
+        return true;
+      }
+
+      // show non-rejected peers that are still candidates
+      return true;
+    });
+  }
+
+  // OPTIONAL DEBUG LIST
+  getAllDevicesDebug() {
+    this._cleanupRejectedPeers();
+    return Array.from(this.devices.values()).map(device => ({
+      ...device,
+      rejected: device.rejected || this._isRejected(device.address),
+      trusted: device.trusted || this.trustedPeerAddresses.has(device.address),
+    }));
   }
 
   getStats() {
     return {
-      totalDevices:     this.devices.size,
+      isInitialized: this.isInitialized,
+      isDiscovering: this.isDiscovering,
+      isConnected: this.isConnected,
+      isWifiDirectOn: this.isWifiDirectOn,
+      localDeviceAddress: this.localDeviceAddress,
+      localDeviceName: this.localDeviceName,
+      isGroupOwner: this._isGroupOwner,
+      groupOwnerAddress: this._groupOwnerAddress,
+      socketConnected: this._socketConnected,
+      trustedPeer: this._trustedPeer,
+      handshakeSent: this._handshakeSent,
+      handshakeAcked: this._handshakeAcked,
+      totalDevicesVisible: this.getDevices().length,
+      totalDevicesInternal: this.devices.size,
       connectedDevices: this.connectedDevices.size,
-      isDiscovering:    this.isDiscovering,
-      isConnected:      this.isConnected,
-      isInitialized:    this.isInitialized,
-      localAddress:     this.localDeviceAddress,
-      isWifiDirectOn:   this.isWifiDirectOn,
+      rejectedPeers: this.rejectedPeers.size,
+      trustedPeerAddresses: this.trustedPeerAddresses.size,
+      sosDeviceName: this._sosDeviceName,
     };
   }
 
   addListener(callback) {
     this.listeners.push(callback);
-    console.log(`${TAG}   addListener — total: ${this.listeners.length}`);
   }
-  removeListener(callback) { this.listeners = this.listeners.filter(cb => cb !== callback); }
+
+  removeListener(callback) {
+    this.listeners = this.listeners.filter(cb => cb !== callback);
+  }
 
   addMessageListener(callback) {
     this.messageListeners.push(callback);
-    console.log(`${TAG}   addMessageListener — total: ${this.messageListeners.length}`);
   }
-  removeMessageListener(callback) { this.messageListeners = this.messageListeners.filter(cb => cb !== callback); }
+
+  removeMessageListener(callback) {
+    this.messageListeners = this.messageListeners.filter(cb => cb !== callback);
+  }
 
   notifyListeners() {
     const devices = this.getDevices();
-    console.log(`${TAG} notifyListeners — ${devices.length} devices, ${this.listeners.length} listeners`);
-    devices.forEach(d => {
-      console.log(`${TAG}   device: name=${d.name} addr=${d.address} connected=${d.isConnected} peerStatus=${d.peerStatus}`);
+    this.listeners.forEach(cb => {
+      try {
+        cb(devices);
+      } catch (e) {
+        console.error(`${TAG} notify listener error`, e);
+      }
     });
-    this.listeners.forEach(cb => cb(devices));
   }
 
-  cleanup() {
-    console.log(`${TAG} ── cleanup() ──`);
-    this.stopDiscovery();
-    this.disconnect();
-    this.eventSubscriptions.forEach(s => s.remove());
-    this.eventSubscriptions = [];
+  async cleanup() {
+    console.log(`${TAG} cleanup()`);
+
+    try {
+      await this.stopDiscovery();
+    } catch (_) {}
+
+    try {
+      await this.disconnect();
+    } catch (_) {}
+
+    this._removeAllEventSubs();
+
     this.devices.clear();
     this.connectedDevices.clear();
-    this.pendingConnections.clear();
-    this.listeners         = [];
-    this.messageListeners  = [];
-    this.isInitialized     = false;
-    this.onStateChanged    = null;
-    console.log(`${TAG}   cleanup done`);
+    this._pendingConnections.clear();
+    this.rejectedPeers.clear();
+    this.trustedPeerAddresses.clear();
+
+    this.listeners = [];
+    this.messageListeners = [];
+
+    this.isInitialized = false;
+    this.isDiscovering = false;
+    this.isConnected = false;
+    this._socketConnected = false;
+    this._trustedPeer = false;
+    this._handshakeSent = false;
+    this._handshakeAcked = false;
+    this._currentConnectedAddress = null;
+    this._clearHandshakeTimer();
   }
 }
 

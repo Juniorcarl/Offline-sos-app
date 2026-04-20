@@ -1,249 +1,381 @@
 /**
  * MessageService.js
  *
- * Sits on top of ConnectionManager.
+ * Mesh relay layer above Bluetooth + Wi-Fi Direct.
+ *
  * Responsibilities:
  *   • Build outgoing SOS packets
+ *   • Encrypt authority-targeted messages (RSA+AES hybrid via AuthorityKeyService)
  *   • Relay packets received from the mesh (TTL-based flood)
  *   • Deduplicate incoming packets by message id
+ *   • Decrypt incoming authority packets when this device is the authority
  *   • Notify UI listeners when a new message arrives
- *   • Trigger background / foreground notification
+ *   • Trigger foreground/background notifications
+ *   • Broadcast / receive authority RSA public keys (KEY: prefix packets)
+ *   • Broadcast ACKs and relay them through both BLE + Wi-Fi Direct
  */
 
 import { createPacket, encodePacket, decodePacket, relayPacket } from './MeshMessagePayload';
 import notificationService from './NotificationService';
+import authorityKeyService from './AuthorityKeyService';
 import * as Location from 'expo-location';
 
-// How long (ms) to keep seen message ids before pruning
-const SEEN_TTL = 5 * 60 * 1000; // 5 minutes
+// Keep seen IDs for 5 minutes
+const SEEN_TTL = 5 * 60 * 1000;
+// Keep seen ACKs for same period
+const ACK_SEEN_TTL = 5 * 60 * 1000;
+
+const TAG = '[MessageService]';
 
 class MessageService {
   constructor() {
-    /** id -> timestamp of when we first saw this message */
-    this._seen     = new Map();
-    /** Listeners notified when a NEW message arrives: (packet) => void */
+    this._seen = new Map();          // messageId -> timestamp
+    this._seenAcks = new Map();      // acked messageId -> timestamp
     this._listeners = [];
-    /** Listeners notified when an ACK arrives for a message WE sent: (messageId) => void */
     this._ackListeners = [];
-    /** IDs of messages this device has sent — used to match incoming ACKs */
-    this._sentIds  = new Set();
-    /** ACK message IDs we've already processed — prevents relay loops */
-    this._seenAcks = new Set();
-    /** Our own device id — set by ConnectionManager on init */
-    this.deviceId  = null;
-    /** Reference injected by ConnectionManager so we can broadcast */
+    this._sentIds = new Set();
+
+    this.deviceId = null;
     this._connectionManager = null;
-    /** Local device role — 'User' or 'Admin' */
-    this._localRole      = 'User';
-    /** Local admin type description (e.g. 'Medics'), empty for non-admin */
+
+    this._localRole = 'User';
     this._localAdminType = '';
 
-    // Prune stale seen ids every minute
-    setInterval(() => this._pruneSeen(), 60_000);
+    setInterval(() => {
+      this._pruneSeen();
+      this._pruneSeenAcks();
+    }, 60_000);
   }
 
-  // ── Setup ─────────────────────────────────────────────────────────────────
+  // ── Setup ────────────────────────────────────────────────────────────────
 
   init(connectionManager, deviceId) {
     this._connectionManager = connectionManager;
     this.deviceId = deviceId;
+    console.log(`${TAG} init() deviceId=${deviceId}`);
   }
 
-  /**
-   * Update the local device's role. Call this after the user saves their profile.
-   * @param {'User'|'Admin'} role
-   * @param {string} adminType
-   */
-  setLocalRole(role, adminType = '') {
-    this._localRole      = role === 'Admin' ? 'Admin' : 'User';
-    this._localAdminType = this._localRole === 'Admin' ? (adminType || '') : '';
-    console.log(`[MessageService] localRole set to: ${this._localRole} (${this._localAdminType})`);
+  async setLocalRole(role, adminType = '') {
+    this._localRole = role === 'Authority' ? 'Authority' : 'User';
+    this._localAdminType = this._localRole === 'Authority' ? (adminType || '') : '';
+    console.log(`${TAG} localRole -> ${this._localRole} (${this._localAdminType})`);
+
+    if (this._localRole === 'Authority' && authorityKeyService.available) {
+      if (!authorityKeyService.hasKeyPair) {
+        console.log(`${TAG} generating RSA key pair for authority role...`);
+        await authorityKeyService.generateKeyPair();
+      }
+
+      const broadcast = () => this.broadcastPublicKey();
+      broadcast();
+      [5000, 15000, 30000, 60000, 120000].forEach(delay => setTimeout(broadcast, delay));
+    }
   }
 
-  // ── Outgoing ──────────────────────────────────────────────────────────────
+  broadcastPublicKey() {
+    const b64 = authorityKeyService.publicKeyB64;
+    if (!b64 || !this._connectionManager) {
+      console.log(`${TAG} broadcastPublicKey skipped: no key or connection manager`);
+      return;
+    }
 
-  /**
-   * Build and broadcast a new SOS message from this device.
-   * @param {string} message
-   * @param {'local'|'authority'} target
-   */
+    console.log(`${TAG} broadcasting authority public key`);
+    this._connectionManager.sendMessage(`KEY:${b64}`);
+  }
+
+  // ── Outgoing ─────────────────────────────────────────────────────────────
+
   async sendSOS(message, target = 'local') {
-    console.log('════════════════════════════════');
-    console.log('📤 [MessageService] sendSOS() CALLED');
-    console.log('📤   message:', message);
-    console.log('📤   target:', target);
-    console.log('📤   deviceId:', this.deviceId);
-    console.log('📤   connectionManager set?', this._connectionManager != null);
+    console.log('════════════════════════════════════════════');
+    console.log(`📤 ${TAG} sendSOS()`);
+    console.log(`📤   target=${target}`);
+    console.log(`📤   deviceId=${this.deviceId}`);
+    console.log(`📤   localRole=${this._localRole}`);
+    console.log(`📤   localAdminType=${this._localAdminType}`);
+    console.log(`📤   message="${message}"`);
+    console.log('════════════════════════════════════════════');
 
-    let latitude  = null;
+    let latitude = null;
     let longitude = null;
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      console.log('📤   location permission status:', status);
+      console.log(`📤 ${TAG} location permission=${status}`);
+
       if (status === 'granted') {
         const loc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
           timeout: 4000,
         });
-        latitude  = loc.coords.latitude;
+        latitude = loc.coords.latitude;
         longitude = loc.coords.longitude;
-        console.log('📤   location obtained:', latitude, longitude);
+        console.log(`📤 ${TAG} location=(${latitude}, ${longitude})`);
       } else {
-        console.warn('📤   location permission not granted — sending without location');
+        console.warn(`📤 ${TAG} location permission not granted`);
       }
     } catch (e) {
-      console.warn('📤   location error:', e.message, '— sending without location');
+      console.warn(`📤 ${TAG} location error: ${e.message}`);
+    }
+
+    let encrypted = null;
+    let msgPayload = message;
+
+    if (target === 'authority' && authorityKeyService.available) {
+      if (authorityKeyService.hasRemoteKey || authorityKeyService.hasKeyPair) {
+        console.log(`📤 ${TAG} encrypting authority-targeted message`);
+        encrypted = await authorityKeyService.encrypt(message);
+
+        if (encrypted) {
+          msgPayload = '[Encrypted — Authority Only]';
+          console.log(`📤 ${TAG} encryption succeeded`);
+        } else {
+          console.warn(`📤 ${TAG} encryption failed — sending plaintext`);
+        }
+      } else {
+        console.warn(`📤 ${TAG} no authority public key yet — sending plaintext`);
+      }
     }
 
     const packet = createPacket({
-      message,
+      message: msgPayload,
       latitude,
       longitude,
-      senderId:        this.deviceId,
+      senderId: this.deviceId,
       target,
-      senderRole:      this._localRole,
+      senderRole: this._localRole,
       senderAdminType: this._localAdminType,
+      encrypted,
     });
 
-    console.log('📤   packet created:', JSON.stringify(packet));
-    console.log('📤   packet.id:', packet.id);
+    console.log(`📤 ${TAG} packet created id=${packet.id} ttl=${packet.ttl} enc=${packet.enc}`);
 
     this._markSeen(packet.id);
     this._sentIds.add(packet.id);
-    console.log('📤   marked as seen (won\'t relay our own message back)');
 
     const encoded = encodePacket(packet);
-    console.log('📤   encoded packet length:', encoded.length, 'chars');
-    console.log('📤   encoded packet:', encoded);
+    console.log(`📤 ${TAG} encoded length=${encoded.length}`);
 
-    console.log('📤   calling connectionManager.sendMessage()...');
     this._connectionManager?.sendMessage(encoded);
-    console.log('📤   connectionManager.sendMessage() returned');
-    console.log('════════════════════════════════');
+    console.log(`📤 ${TAG} sent to ConnectionManager`);
 
-    // Show in message history immediately (with _isMine flag so UI can style it)
-    this._notifyListeners({ ...packet, _isMine: true });
+    // Immediately show locally in UI
+    this._notifyListeners({
+      ...packet,
+      msg: message,
+      _isMine: true,
+      _transport: 'local',
+    });
 
     return packet;
   }
 
-  // ── Incoming (called by ConnectionManager when data arrives) ──────────────
+  // ── Incoming ─────────────────────────────────────────────────────────────
 
-  /**
-   * Call this whenever raw bytes / string arrive from the mesh.
-   * Handles dedup, relay, and notifying UI.
-   */
-  handleIncoming(raw) {
-    // ── ACK short-circuit ────────────────────────────────────────────────────
+  async handleIncoming(raw) {
+    const preview = typeof raw === 'string' ? raw.slice(0, 120) : '[non-string]';
+    console.log('════════════════════════════════════════════');
+    console.log(`📥 ${TAG} handleIncoming()`);
+    console.log(`📥   preview=${preview}`);
+    console.log('════════════════════════════════════════════');
+
+    // KEY broadcast
+    if (typeof raw === 'string' && raw.startsWith('KEY:')) {
+      console.log(`🔑 ${TAG} received authority public key broadcast`);
+      await authorityKeyService.storeRemoteKey(raw.slice(4));
+      return;
+    }
+
+    // ACK
     if (typeof raw === 'string' && raw.startsWith('ACK:')) {
       this._handleAck(raw);
       return;
     }
 
-    // ── Normal SOS packet ────────────────────────────────────────────────────
+    // Normal packet
     const packet = decodePacket(raw);
     if (!packet) {
-      console.warn('⚠️ MessageService: malformed packet, ignoring');
+      console.warn(`⚠️ ${TAG} malformed packet ignored`);
       return;
     }
 
-    // Ignore our own messages that bounced back
-    if (packet.sid === this.deviceId) return;
+    console.log(
+      `📩 ${TAG} packet id=${packet.id} sid=${packet.sid} target=${packet.target} ttl=${packet.ttl} enc=${packet.enc}`
+    );
 
-    // Deduplicate
+    // Ignore our own bounced-back messages
+    if (packet.sid === this.deviceId) {
+      console.log(`📩 ${TAG} ignoring own bounced packet ${packet.id}`);
+      return;
+    }
+
+    // Dedup
     if (this._hasSeen(packet.id)) {
-      console.log('🔁 Duplicate suppressed:', packet.id);
+      console.log(`🔁 ${TAG} duplicate suppressed id=${packet.id}`);
       return;
     }
     this._markSeen(packet.id);
 
-    console.log(`📩 New SOS from ${packet.sid} | target:${packet.target} | sRole:${packet.sRole} | ttl:${packet.ttl}`);
-
-    // Route by target vs local role — always relay, only alert the intended role:
-    //   'local'     → alert User devices only
-    //   'admin'     → alert Admin devices only
-    //   'authority' → alert everyone
-    const localIsAdmin = this._localRole === 'Admin';
+    const localIsAuthority = this._localRole === 'Authority';
     const shouldNotify =
-      packet.target === 'authority' ||
-      (packet.target === 'admin' &&  localIsAdmin) ||
-      (packet.target === 'local' && !localIsAdmin);
+      (packet.target === 'authority' && localIsAuthority) ||
+      (packet.target === 'local' && !localIsAuthority);
+
+    let displayPacket = packet;
 
     if (shouldNotify) {
-      this._notifyListeners(packet);
-      notificationService.showAlert(packet);
+      if (packet.enc && packet.target === 'authority' && localIsAuthority) {
+        console.log(`🔓 ${TAG} decrypting authority message id=${packet.id}`);
+        const plaintext = await authorityKeyService.decrypt({
+          ct: packet.ct,
+          iv: packet.iv,
+          ek: packet.ek,
+        });
+
+        if (plaintext) {
+          displayPacket = { ...packet, msg: plaintext };
+          console.log(`🔓 ${TAG} decryption successful id=${packet.id}`);
+        } else {
+          console.warn(`🔓 ${TAG} decryption failed id=${packet.id}`);
+        }
+      }
+
+      console.log(`📣 ${TAG} notifying UI for packet id=${packet.id}`);
+      this._notifyListeners(displayPacket);
+      notificationService.showAlert(displayPacket);
     } else {
-      console.log(`📩 Message target="${packet.target}" skipped on ${this._localRole} device — relaying only`);
+      console.log(
+        `📩 ${TAG} packet ${packet.id} not for this role (${this._localRole}) — relay only`
+      );
     }
 
-    // Send ACK back through the mesh so the original sender knows we got it
+    // ACK back into mesh
     const ack = `ACK:${packet.id}`;
     this._connectionManager?.sendMessage(ack);
-    console.log(`📨 Sent ACK for ${packet.id}`);
+    console.log(`📨 ${TAG} ACK sent for ${packet.id}`);
 
-    // Relay to rest of mesh (flood with TTL decrement)
+    // Relay original packet unchanged except TTL--
     const relay = relayPacket(packet);
-    if (relay) {
-      const encoded = encodePacket(relay);
-      this._connectionManager?.sendMessage(encoded);
-      console.log(`🔄 Relayed packet ${packet.id} | remaining ttl: ${relay.ttl}`);
+    if (!relay) {
+      console.log(`⛔ ${TAG} relay dropped for ${packet.id} because TTL exhausted`);
+      return;
     }
+
+    const relayEncoded = encodePacket(relay);
+    this._connectionManager?.sendMessage(relayEncoded);
+    console.log(
+      `🔄 ${TAG} relayed packet id=${packet.id} originalTTL=${packet.ttl} newTTL=${relay.ttl}`
+    );
   }
 
-  // ── ACK handling ──────────────────────────────────────────────────────────
+  // ── ACK handling ─────────────────────────────────────────────────────────
 
   _handleAck(raw) {
-    const messageId = raw.slice(4); // strip "ACK:"
+    const messageId = raw.slice(4);
     if (!messageId) return;
 
-    // Dedup — prevents relay loops
-    if (this._seenAcks.has(messageId)) return;
-    this._seenAcks.add(messageId);
+    if (this._hasSeenAck(messageId)) {
+      console.log(`🔁 ${TAG} duplicate ACK suppressed for ${messageId}`);
+      return;
+    }
+    this._markSeenAck(messageId);
 
-    // If WE sent this message, notify UI listeners (delivery confirmation)
     if (this._sentIds.has(messageId)) {
-      console.log(`✅ ACK received — our message ${messageId} was delivered`);
+      console.log(`✅ ${TAG} ACK received for our message ${messageId}`);
       this._notifyAckListeners(messageId);
-      return; // don't relay — we are the intended destination
+      return;
     }
 
-    // Otherwise relay the ACK onwards so it can reach the original sender
     this._connectionManager?.sendMessage(raw);
-    console.log(`🔄 Relayed ACK for ${messageId}`);
+    console.log(`🔄 ${TAG} relayed ACK for ${messageId}`);
   }
 
-  // ── SOS listeners ─────────────────────────────────────────────────────────
+  // ── UI listeners ─────────────────────────────────────────────────────────
 
-  addListener(cb)    { this._listeners.push(cb); }
-  removeListener(cb) { this._listeners = this._listeners.filter(l => l !== cb); }
+  addListener(cb) {
+    this._listeners.push(cb);
+  }
+
+  removeListener(cb) {
+    this._listeners = this._listeners.filter(l => l !== cb);
+  }
 
   _notifyListeners(packet) {
     this._listeners.forEach(cb => {
-      try { cb(packet); } catch (e) { console.error('MessageService listener error:', e); }
+      try {
+        cb(packet);
+      } catch (e) {
+        console.error(`${TAG} listener error:`, e);
+      }
     });
   }
 
-  // ── ACK listeners ──────────────────────────────────────────────────────────
+  // ── ACK listeners ────────────────────────────────────────────────────────
 
-  addAckListener(cb)    { this._ackListeners.push(cb); }
-  removeAckListener(cb) { this._ackListeners = this._ackListeners.filter(l => l !== cb); }
+  addAckListener(cb) {
+    this._ackListeners.push(cb);
+  }
+
+  removeAckListener(cb) {
+    this._ackListeners = this._ackListeners.filter(l => l !== cb);
+  }
 
   _notifyAckListeners(messageId) {
     this._ackListeners.forEach(cb => {
-      try { cb(messageId); } catch (e) { console.error('MessageService ACK listener error:', e); }
+      try {
+        cb(messageId);
+      } catch (e) {
+        console.error(`${TAG} ACK listener error:`, e);
+      }
     });
   }
 
-  // ── Seen-id management ────────────────────────────────────────────────────
+  // ── Seen management ──────────────────────────────────────────────────────
 
-  _hasSeen(id)  { return this._seen.has(id); }
-  _markSeen(id) { this._seen.set(id, Date.now()); }
+  _hasSeen(id) {
+    return this._seen.has(id);
+  }
+
+  _markSeen(id) {
+    this._seen.set(id, Date.now());
+  }
+
+  _hasSeenAck(id) {
+    return this._seenAcks.has(id);
+  }
+
+  _markSeenAck(id) {
+    this._seenAcks.set(id, Date.now());
+  }
 
   _pruneSeen() {
     const cutoff = Date.now() - SEEN_TTL;
+    let removed = 0;
+
     for (const [id, ts] of this._seen.entries()) {
-      if (ts < cutoff) this._seen.delete(id);
+      if (ts < cutoff) {
+        this._seen.delete(id);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      console.log(`${TAG} pruned ${removed} seen packet ids`);
+    }
+  }
+
+  _pruneSeenAcks() {
+    const cutoff = Date.now() - ACK_SEEN_TTL;
+    let removed = 0;
+
+    for (const [id, ts] of this._seenAcks.entries()) {
+      if (ts < cutoff) {
+        this._seenAcks.delete(id);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      console.log(`${TAG} pruned ${removed} seen ACK ids`);
     }
   }
 }

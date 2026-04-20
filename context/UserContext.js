@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import messageService from '../services/MessageService';
+import authorityKeyService from '../services/AuthorityKeyService';
 
 const UserContext = createContext();
 
@@ -38,6 +39,7 @@ export function UserProvider({ children }) {
   const [alertRepeat,       setAlertRepeatState]       = useState(DEFAULTS.alertRepeat);
   const [alertVolume,       setAlertVolumeState]       = useState(DEFAULTS.alertVolume);
   const [alertSoundId,      setAlertSoundIdState]      = useState(DEFAULTS.alertSoundId);
+  const [userLocation,      setUserLocation]           = useState(null); // { lat, lng } — updated live by HomeScreen
   const [loaded,            setLoaded]                 = useState(false);
 
   useEffect(() => {
@@ -75,12 +77,22 @@ export function UserProvider({ children }) {
         setLoaded(true);
       }
     };
+    // Load authority keys alongside app settings so crypto is ready before
+    // any mesh messages are processed
+    authorityKeyService.load().catch(e =>
+      console.warn('[UserContext] authorityKeyService.load error:', e.message)
+    );
+
     loadSettings();
   }, []);
 
-  // Keep MessageService in sync with role so packets are correctly filtered
+  // Keep MessageService in sync with role so packets are correctly filtered.
+  // setLocalRole is async — it generates a key pair and broadcasts the public
+  // key when role is Admin, so we fire-and-forget here.
   useEffect(() => {
-    messageService.setLocalRole(role, adminType);
+    messageService.setLocalRole(role, adminType).catch(e =>
+      console.warn('[UserContext] setLocalRole error:', e.message)
+    );
   }, [role, adminType]);
 
   const save = async (key, value) => {
@@ -151,6 +163,7 @@ export function UserProvider({ children }) {
       alertRepeat,       setAlertRepeat,
       alertVolume,       setAlertVolume,
       alertSoundId,      setAlertSoundId,
+      userLocation,      setUserLocation,
       clearAllData,
     }}>
       {children}

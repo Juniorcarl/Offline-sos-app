@@ -34,6 +34,7 @@ export default function HomeScreen() {
   const {
     sosSize, fontSize, reduceMotion, colorBlindMode,
     shakeInBackground, darkMode,
+    userLocation, setUserLocation,
   } = useUser();
 
   const [devicesModalVisible, setDevicesModalVisible] = useState(false);
@@ -43,7 +44,6 @@ export default function HomeScreen() {
   const [wifiEnabled, setWifiEnabled]                 = useState(false);
   const [wifiDirectEnabled, setWifiDirectEnabled]     = useState(false);
   const [appState, setAppState]                       = useState(AppState.currentState);
-  const [userLocation, setUserLocation]               = useState(null);
 
   const notifGranted = PermissionManager.getResults().notifications;
 
@@ -225,9 +225,11 @@ export default function HomeScreen() {
   };
 
   const handleDevicesUpdate = (devices) => {
+    // Only update device counts here — syncStats reads wifi state and is called
+    // separately on AppState changes. Keeping it out of this hot path avoids
+    // extra setState calls every time a BLE advertisement arrives.
     setDeviceCount(devices.length);
     setConnectedCount(devices.filter(d => d.isConnected).length);
-    syncStats();
   };
 
   // ── Pulse animation ───────────────────────────────────────────────────────

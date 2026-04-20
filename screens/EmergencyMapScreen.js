@@ -163,19 +163,26 @@ function buildMapHTML(center, sosMarkers, singleMode) {
     var markers = ${JSON.stringify(sosMarkers)};
     var singleMode = ${JSON.stringify(!!singleMode)};
 
+    window.sosMarkerObjects = [];
+
     markers.forEach(function(m) {
       if (m.lat == null || m.lng == null) return;
+
+      function popupHtml(dist) {
+        return '<b>🚨 ' + m.name + '</b><br>' +
+               '<i>"' + m.message + '"</i><br>' +
+               '<small>📍 ' + dist + ' away &middot; ' + m.hops + ' hop(s)</small>';
+      }
+
       var marker = L.marker([m.lat, m.lng], { icon: sosIcon })
         .addTo(window.leafletMap)
-        .bindPopup(
-          '<b>🚨 ' + m.name + '</b><br>' +
-          '<i>"' + m.message + '"</i><br>' +
-          '<small>📍 ' + m.distance + ' away &middot; ' + m.hops + ' hop(s)</small>'
-        );
+        .bindPopup(popupHtml(m.distance));
+
+      window.sosMarkerObjects.push({ marker: marker, popupHtml: popupHtml });
 
       if (singleMode) {
         // Draw dashed line between user and sender
-        var line = L.polyline([center, [m.lat, m.lng]], {
+        L.polyline([center, [m.lat, m.lng]], {
           color: '#d64045',
           weight: 2.5,
           opacity: 0.75,
@@ -192,6 +199,15 @@ function buildMapHTML(center, sosMarkers, singleMode) {
         setTimeout(function() { marker.openPopup(); }, 600);
       }
     });
+
+    // Allow React Native to push a refreshed distance into the popup
+    window.updateSosDistance = function(dist) {
+      window.sosMarkerObjects.forEach(function(obj) {
+        var wasOpen = obj.marker.isPopupOpen();
+        obj.marker.setPopupContent(obj.popupHtml(dist));
+        if (wasOpen) obj.marker.openPopup();
+      });
+    };
 
     window.ReactNativeWebView &&
       window.ReactNativeWebView.postMessage('MAP_READY');
@@ -238,41 +254,83 @@ export default function EmergencyMapScreen() {
         return;
       }
 
-      // Get initial location
+      // ── Step 1: try last-known position for an instant result ────────────────
       let initLoc = passedLocation;
       if (!initLoc) {
         try {
-          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-          initLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          const last = await Location.getLastKnownPositionAsync();
+          if (last) {
+            initLoc = { lat: last.coords.latitude, lng: last.coords.longitude };
+          }
         } catch (e) {
-          console.log('Map initial location error:', e);
+          console.log('Map last-known location error:', e);
         }
       }
 
+      // ── Step 2: render map immediately with whatever location we have ──────
       if (isMounted.current && initLoc) setUserLocation(initLoc);
 
-      // Compute markers using initial location (distance will be recalculated on map)
-      const center = initLoc ? [initLoc.lat, initLoc.lng] : [-22.5763, 27.1322];
+      const computeCenter = (loc) =>
+        loc ? [loc.lat, loc.lng] : [-22.5763, 27.1322];
 
-      const sosMarkers = messages
-        .filter(m => m.latitude != null && m.longitude != null)
-        .map(m => ({
-          lat:      m.latitude,
-          lng:      m.longitude,
-          name:     m.name,
-          message:  m.message,
-          distance: (initLoc
-            ? haversineDistance(initLoc.lat, initLoc.lng, m.latitude, m.longitude)
-            : m.distance) ?? '?',
-          hops: m.hops ?? 1,
-        }));
+      const buildMarkers = (loc) =>
+        messages
+          .filter(m => m.latitude != null && m.longitude != null)
+          .map(m => ({
+            lat:      m.latitude,
+            lng:      m.longitude,
+            name:     m.name,
+            message:  m.message,
+            distance: loc
+              ? haversineDistance(loc.lat, loc.lng, m.latitude, m.longitude)
+              : '?',
+            hops: m.hops ?? 1,
+          }));
+
+      const initialMarkers = buildMarkers(initLoc);
 
       if (isMounted.current) {
-        setMapHTML(buildMapHTML(center, sosMarkers, singleMode));
-        if (singleMode && sosMarkers.length > 0) {
-          setLiveDistance(sosMarkers[0].distance);
+        setMapHTML(buildMapHTML(computeCenter(initLoc), initialMarkers, singleMode));
+        if (singleMode && initialMarkers.length > 0) {
+          setLiveDistance(initialMarkers[0].distance);
         }
         setReady(true);
+      }
+
+      // ── Step 3: refine with a fresh high-accuracy fix ──────────────────────
+      try {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const refinedLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        if (isMounted.current) {
+          setUserLocation(refinedLoc);
+          if (singleMode && messages[0]) {
+            const d = haversineDistance(
+              refinedLoc.lat, refinedLoc.lng,
+              messages[0].latitude, messages[0].longitude
+            );
+            setLiveDistance(d);
+          }
+          if (mapReadyRef.current && webviewRef.current) {
+            try {
+              const distUpdate = singleMode && messages[0]
+                ? `if (window.updateSosDistance) { window.updateSosDistance(${JSON.stringify(
+                    haversineDistance(refinedLoc.lat, refinedLoc.lng, messages[0].latitude, messages[0].longitude)
+                  )}); }`
+                : '';
+              webviewRef.current.injectJavaScript(`
+                (function() {
+                  if (window.userMarker && window.leafletMap) {
+                    window.userMarker.setLatLng([${refinedLoc.lat}, ${refinedLoc.lng}]);
+                  }
+                  ${distUpdate}
+                })(); true;
+              `);
+            } catch (_) {}
+          }
+        }
+        initLoc = refinedLoc;
+      } catch (e) {
+        console.log('Map refined location error:', e);
       }
 
       // Start watching location for real-time marker updates
@@ -293,10 +351,16 @@ export default function EmergencyMapScreen() {
 
             if (mapReadyRef.current && webviewRef.current && isMounted.current) {
               try {
+                const distStr = singleMode
+                  ? haversineDistance(pos.lat, pos.lng, messages[0].latitude, messages[0].longitude)
+                  : null;
                 webviewRef.current.injectJavaScript(`
                   (function() {
                     if (window.userMarker && window.leafletMap) {
                       window.userMarker.setLatLng([${pos.lat}, ${pos.lng}]);
+                    }
+                    if (window.updateSosDistance && ${JSON.stringify(distStr)} !== null) {
+                      window.updateSosDistance(${JSON.stringify(distStr)});
                     }
                   })(); true;
                 `);

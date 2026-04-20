@@ -73,7 +73,7 @@ export default function ProfileScreen() {
     if (editedName.trim()) {
       setName(editedName.trim());
       setRole(selectedRole);
-      const finalAdminType = selectedRole === 'Admin' ? editedAdminType.trim() : '';
+      const finalAdminType = selectedRole === 'Authority' ? editedAdminType.trim() : '';
       setAdminType(finalAdminType);
       messageService.setLocalRole(selectedRole, finalAdminType);
       Alert.alert('Saved', 'Your profile has been updated.');
@@ -171,30 +171,30 @@ export default function ProfileScreen() {
             <TouchableOpacity
               style={[
                 styles.roleBtn,
-                selectedRole === 'Admin' && styles.roleBtnActive,
-                { borderColor: selectedRole === 'Admin' ? '#d64045' : (darkMode ? '#444' : '#ddd') },
+                selectedRole === 'Authority' && styles.roleBtnActive,
+                { borderColor: selectedRole === 'Authority' ? '#d64045' : (darkMode ? '#444' : '#ddd') },
               ]}
-              onPress={() => setSelectedRole('Admin')}
+              onPress={() => setSelectedRole('Authority')}
             >
               <Ionicons
                 name="shield-checkmark-outline"
                 size={15}
-                color={selectedRole === 'Admin' ? '#d64045' : subColor}
+                color={selectedRole === 'Authority' ? '#d64045' : subColor}
               />
               <Text style={[
                 styles.roleBtnText,
-                { fontSize: 14 * fontSize, color: selectedRole === 'Admin' ? '#d64045' : subColor },
-                selectedRole === 'Admin' && { fontWeight: '700' },
+                { fontSize: 14 * fontSize, color: selectedRole === 'Authority' ? '#d64045' : subColor },
+                selectedRole === 'Authority' && { fontWeight: '700' },
               ]}>
-                Admin
+                Authority
               </Text>
             </TouchableOpacity>
           </View>
 
-          {selectedRole === 'Admin' && (
+          {selectedRole === 'Authority' && (
             <View style={styles.adminTypeSection}>
               <Text style={[styles.adminTypeLabel, { fontSize: 11 * fontSize, color: subColor }]}>
-                ADMIN TYPE (e.g. Security Police, Medics)
+                AUTHORITY TYPE (e.g. Security Police, Medics)
               </Text>
               <TextInput
                 style={[

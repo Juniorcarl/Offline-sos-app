@@ -28,6 +28,7 @@ export default function EmergencyAlertOverlay() {
     alertVolume,
     alertRepeat,
     alertSoundId,
+    userLocation,
   } = useUser();
 
   const [visible, setVisible] = useState(false);
@@ -127,6 +128,7 @@ export default function EmergencyAlertOverlay() {
   const openMap = useCallback(async () => {
     await dismiss();
     navigation.navigate('EmergencyMap', {
+      userLocation: userLocation ?? null,
       messages: packet ? [{
         id:        packet.id,
         name:      `Device ${packet.sid?.slice(-6) ?? 'Unknown'}`,
@@ -140,7 +142,7 @@ export default function EmergencyAlertOverlay() {
         longitude: packet.lon,
       }] : [],
     });
-  }, [packet, dismiss, navigation]);
+  }, [packet, dismiss, navigation, userLocation]);
 
   if (!visible || !packet) return null;
 

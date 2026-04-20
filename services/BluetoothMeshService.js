@@ -5,9 +5,10 @@ import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
 const SERVICE_UUID        = '0000FFF0-0000-1000-8000-00805F9B34FB';
 const CHARACTERISTIC_UUID = '0000FFF1-0000-1000-8000-00805F9B34FB';
 const COMPANY_ID          = 0x00E0;
-const STALE_THRESHOLD     = 45000;
-const STALE_CHECK_INTERVAL = 5000;
-const READVERTISE_INTERVAL = 10000;
+const STALE_THRESHOLD      = 45000;
+const STALE_CHECK_INTERVAL = 20000;  // was 5000 — reduced to cut logging/CPU overhead
+const READVERTISE_INTERVAL = 30000;  // was 10000 — less frequent reconnection churn
+const NOTIFY_DEBOUNCE_MS   = 200;    // batch rapid-fire listener calls into one
 
 const TAG = '[BLE]';
 const { BluetoothModule } = NativeModules;
@@ -39,6 +40,8 @@ class BluetoothMeshService {
     this.pendingBackConnectMACs = new Set();
     // Messages queued while connectedDevices was empty — flushed on first connection
     this._pendingMessages   = [];
+    // Debounce timer — batches rapid notifyListeners calls into one
+    this._notifyTimer       = null;
     console.log(`${TAG} BluetoothMeshService constructed — deviceName=${this.deviceName}`);
     console.log(`${TAG} BluetoothModule available: ${!!BluetoothModule}`);
     console.log(`${TAG} Platform: ${Platform.OS} SDK: ${Platform.Version}`);
@@ -65,7 +68,7 @@ class BluetoothMeshService {
               console.log(`${TAG}   matched device name=${name} mac=${address}`);
               this.devices.set(name, { ...device, isConnected: true });
               found = true;
-              this.notifyListeners();
+              this._immediateNotify(); // connection change — update UI right away
               // If we don't already have a PLX outgoing connection, connect back.
               setTimeout(() => {
                 if (this.isBluetoothOn && !this.connectedDevices.has(name)) {
@@ -103,7 +106,7 @@ class BluetoothMeshService {
               console.log(`${TAG}   matched device name=${name} mac=${address}`);
               if (!this.connectedDevices.has(name)) {
                 this.devices.set(name, { ...device, isConnected: false });
-                this.notifyListeners();
+                this._immediateNotify(); // disconnection — update UI right away
               }
               found = true;
               break;
@@ -202,7 +205,7 @@ class BluetoothMeshService {
     this._pendingMessages = [];
     this.devices.clear();
     this.connectedDevices.clear();
-    this.notifyListeners();
+    this._immediateNotify();
   }
 
   async _startGattServer() {
@@ -364,8 +367,8 @@ class BluetoothMeshService {
       if (!device) return;
 
       totalScanned++;
-      if (totalScanned % 100 === 0) {
-        console.log(`${TAG}   [scan] ${totalScanned} total seen, ${namedDevicesScanned} named, ${this.devices.size} SOS tracked`);
+      if (totalScanned % 200 === 0) {
+        console.log(`${TAG}   [scan] ${totalScanned} total scanned, ${this.devices.size} SOS tracked, ${this.connectedDevices.size} connected`);
       }
 
       // Check service UUIDs advertised by this device
@@ -377,13 +380,7 @@ class BluetoothMeshService {
       );
       const hasSosName = device.name && device.name.startsWith('SOS_');
 
-      if (device.name) {
-        namedDevicesScanned++;
-        console.log(`${TAG}   [scan] named device: name=${device.name} id=${device.id} rssi=${device.rssi} hasSosUUID=${hasSosUUID} serviceUUIDs=${JSON.stringify(serviceUUIDs)}`);
-      }
-
       if (hasSosUUID || hasSosName) {
-        console.log(`${TAG}   [scan] ✅ SOS PEER FOUND: id=${device.id} name=${device.name || '(no name)'} rssi=${device.rssi} hasSosUUID=${hasSosUUID} hasSosName=${hasSosName}`);
         this._handleDeviceFound(device);
       }
     });
@@ -416,8 +413,10 @@ class BluetoothMeshService {
     const alreadyKnown     = this.devices.has(name);
     const alreadyConnected = this.connectedDevices.has(name);
 
-    console.log(`${TAG} ── _handleDeviceFound: name=${name} mac=${mac} rssi=${rssi} alreadyKnown=${alreadyKnown} alreadyConnected=${alreadyConnected}`);
-    console.log(`${TAG}   isConnectable=${device.isConnectable} mtu=${device.mtu} distance≈${Math.round(distance)}m`);
+    // Only log new devices or connection state changes — not every RSSI update
+    if (!alreadyKnown) {
+      console.log(`${TAG} ── _handleDeviceFound NEW: name=${name} mac=${mac} rssi=${rssi}`);
+    }
 
     const existing = this.devices.get(name);
 
@@ -433,7 +432,7 @@ class BluetoothMeshService {
         this.connectedDevices.delete(name);
         // Update isConnected=false so UI reflects the brief gap
         this.devices.set(name, { ...this.devices.get(name), id: mac, isConnected: false });
-        this.notifyListeners();
+        this._immediateNotify(); // MAC rotation = connection gap, update UI immediately
         if (oldDevice) {
           try { this.manager.cancelDeviceConnection(oldDevice.id); } catch (_) {}
         }
@@ -486,7 +485,7 @@ class BluetoothMeshService {
       }
     }
 
-    if (changed) this.notifyListeners();
+    if (changed) this._debouncedNotify(); // RSSI change — debounce is fine
   }
 
   async _connectToDevice(deviceName) {
@@ -556,7 +555,7 @@ class BluetoothMeshService {
       if (info) {
         this.devices.set(deviceName, { ...info, isConnected: true });
       }
-      this.notifyListeners();
+      this._immediateNotify(); // connection established — update UI right away
       console.log(`${TAG}   ✅ Connected to ${deviceName} (mac=${mac}). Total connected: ${this.connectedDevices.size}`);
 
       // Flush any messages that were queued while we had no connections
@@ -571,7 +570,7 @@ class BluetoothMeshService {
         const latestInfo = this.devices.get(deviceName);
         if (latestInfo) {
           this.devices.set(deviceName, { ...latestInfo, isConnected: false });
-          this.notifyListeners();
+          this._immediateNotify(); // disconnection — update UI right away
         }
         console.log(`${TAG}   scheduling reconnect in 4s...`);
         setTimeout(() => {
@@ -644,48 +643,36 @@ class BluetoothMeshService {
       return;
     }
 
-    console.log(`${TAG}   Sending to ${count} device(s):`);
-    this.connectedDevices.forEach((device, name) => {
-      console.log(`${TAG}     → target name=${name} mac=${device.id}`);
-    });
+    console.log(`${TAG}   Sending to ${count} device(s)`);
 
-    this.connectedDevices.forEach(async (device, name) => {
-      // device is the PLX device object — its .id is the MAC used at connection time
-      const mac = device.id;
-      const currentMac = this.devices.get(name)?.id;
-      console.log(`${TAG}   ╔══ [WRITE] target=${name}`);
-      console.log(`${TAG}   ║   connection MAC (PLX): ${mac}`);
-      console.log(`${TAG}   ║   current scan MAC:     ${currentMac || '?'}`);
-      console.log(`${TAG}   ║   MAC match: ${mac === currentMac ? '✅' : '⚠️ MISMATCH'}`);
-      console.log(`${TAG}   ║   payload base64 length: ${encoded.length}`);
-      try {
-        const result = await this.manager.writeCharacteristicWithResponseForDevice(
-          mac,
-          SERVICE_UUID,
-          CHARACTERISTIC_UUID,
-          encoded,
-        );
-        console.log(`${TAG}   ╚══ ✅ [WRITE SUCCESS] ${name} (mac=${mac}) — peer confirmed write`);
-      } catch (e) {
-        console.error(`${TAG}   ╚══ ❌ [WRITE FAILED] ${name} (mac=${mac})`);
-        console.error(`${TAG}       error: ${e.message} | code: ${e.errorCode} | reason: ${e.reason}`);
-        // Write failed — the connection handle is stale (likely due to MAC rotation or disconnect).
-        // Drop it from connectedDevices and trigger a reconnect.
-        this.connectedDevices.delete(name);
-        const latestInfo = this.devices.get(name);
-        if (latestInfo) {
-          this.devices.set(name, { ...latestInfo, isConnected: false });
-          this.notifyListeners();
-        }
-        console.warn(`${TAG}       Scheduling reconnect to ${name} in 2s...`);
-        setTimeout(() => {
-          if (this.isBluetoothOn && this.devices.has(name) && !this.connectedDevices.has(name) && !this.connectingDevices.has(name)) {
-            console.log(`${TAG}   [write-fail reconnect] reconnecting to ${name}`);
-            this._connectToDevice(name);
+    // Write to each peer sequentially to avoid flooding the BLE stack with
+    // concurrent writes — concurrent async forEach does not back-pressure.
+    const targets = Array.from(this.connectedDevices.entries());
+    (async () => {
+      for (const [name, device] of targets) {
+        const mac = device.id;
+        try {
+          await this.manager.writeCharacteristicWithResponseForDevice(
+            mac, SERVICE_UUID, CHARACTERISTIC_UUID, encoded,
+          );
+          console.log(`${TAG}   ✅ [WRITE] ${name} (mac=${mac})`);
+        } catch (e) {
+          console.error(`${TAG}   ❌ [WRITE FAILED] ${name} (mac=${mac}): ${e.message}`);
+          // Stale connection — drop and reconnect
+          this.connectedDevices.delete(name);
+          const latestInfo = this.devices.get(name);
+          if (latestInfo) {
+            this.devices.set(name, { ...latestInfo, isConnected: false });
+            this._immediateNotify();
           }
-        }, 2000);
+          setTimeout(() => {
+            if (this.isBluetoothOn && this.devices.has(name) && !this.connectedDevices.has(name) && !this.connectingDevices.has(name)) {
+              this._connectToDevice(name);
+            }
+          }, 2000);
+        }
       }
-    });
+    })();
     console.log(`${TAG} ════════════════════════════════`);
   }
 
@@ -706,7 +693,7 @@ class BluetoothMeshService {
       }
       if (changed) {
         console.log(`${TAG}   [stale] removed ${before - this.devices.size} devices. Remaining: ${this.devices.size}`);
-        this.notifyListeners();
+        this._debouncedNotify();
       } else {
         console.log(`${TAG}   [stale] no stale devices. Total: ${this.devices.size} tracked, ${this.connectedDevices.size} connected`);
       }
@@ -777,22 +764,37 @@ class BluetoothMeshService {
   addMessageListener(cb)    { this.messageListeners.push(cb); console.log(`${TAG}   addMessageListener — total: ${this.messageListeners.length}`); }
   removeMessageListener(cb) { this.messageListeners = this.messageListeners.filter(l => l !== cb); }
 
-  notifyListeners() {
+  // Debounced version — coalesces rapid-fire calls (e.g. RSSI updates, scan duplicates)
+  // into a single notification 200ms after the last call.
+  // Use _immediateNotify() only for critical state changes (connect/disconnect).
+  _debouncedNotify() {
+    if (this._notifyTimer) return;
+    this._notifyTimer = setTimeout(() => {
+      this._notifyTimer = null;
+      this._immediateNotify();
+    }, NOTIFY_DEBOUNCE_MS);
+  }
+
+  _immediateNotify() {
+    if (this._notifyTimer) {
+      clearTimeout(this._notifyTimer);
+      this._notifyTimer = null;
+    }
     const devices = this.getDevices();
-    console.log(`${TAG} notifyListeners — ${devices.length} devices total, ${this.connectedDevices.size} connected, ${this.listeners.length} listeners`);
-    devices.forEach(d => {
-      console.log(`${TAG}   device: name=${d.name} mac=${d.id} transport=${d.transport} connected=${d.isConnected} rssi=${d.rssi}`);
-    });
+    console.log(`${TAG} notifyListeners — ${devices.length} devices, ${this.connectedDevices.size} connected`);
     this.listeners.forEach(cb => cb(devices));
   }
 
+  // Keep old name so external callers (ConnectionManager) still work
+  notifyListeners() { this._debouncedNotify(); }
+
   notifyMessageListeners(raw) {
-    console.log(`${TAG} notifyMessageListeners — ${this.messageListeners.length} listeners, message length=${raw?.length}`);
     this.messageListeners.forEach(cb => cb(raw));
   }
 
   cleanup() {
     console.log(`${TAG} ── cleanup() ──`);
+    if (this._notifyTimer) { clearTimeout(this._notifyTimer); this._notifyTimer = null; }
     this.stopScanning();
     this.stopAdvertising();
     this._stopGattServer();
