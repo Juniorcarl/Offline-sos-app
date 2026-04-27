@@ -25,9 +25,19 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
   return m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`;
 }
 
+// Calculate numeric distance in meters for comparisons
+function getDistanceInMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // ── Build the offline-capable map HTML ───────────────────────────────────────
-// Leaflet is loaded from CDN (WebView caches it after first load).
-// Map tiles are cached in IndexedDB — once seen while online, available offline.
 function buildMapHTML(center, sosMarkers, singleMode) {
   return `<!DOCTYPE html>
 <html>
@@ -60,11 +70,9 @@ function buildMapHTML(center, sosMarkers, singleMode) {
 
   <script>
   (function() {
-    if (typeof L === 'undefined') return; // handled by onerror above
+    if (typeof L === 'undefined') return;
 
     // ── IndexedDB tile cache ────────────────────────────────────────────────
-    // Tiles fetched while online are saved permanently. On next open (even
-    // offline) the same tile is served from IndexedDB instead of the network.
     var _idb = null;
     (function() {
       try {
@@ -100,12 +108,10 @@ function buildMapHTML(center, sosMarkers, singleMode) {
 
         _dbGet(key, function(cached) {
           if (cached) {
-            // Serve from IndexedDB — fully offline
             tile.src = cached;
             done(null, tile);
             return;
           }
-          // Fetch from network and cache
           fetch(url, { credentials: 'omit' })
             .then(function(r) { return r.ok ? r.blob() : Promise.reject(); })
             .then(function(blob) {
@@ -120,7 +126,6 @@ function buildMapHTML(center, sosMarkers, singleMode) {
               fr.readAsDataURL(blob);
             })
             .catch(function() {
-              // Offline and not cached — show transparent tile
               done(null, tile);
               window.ReactNativeWebView &&
                 window.ReactNativeWebView.postMessage('TILES_OFFLINE');
@@ -178,7 +183,7 @@ function buildMapHTML(center, sosMarkers, singleMode) {
         .addTo(window.leafletMap)
         .bindPopup(popupHtml(m.distance));
 
-      window.sosMarkerObjects.push({ marker: marker, popupHtml: popupHtml });
+      window.sosMarkerObjects.push({ marker: marker, popupHtml: popupHtml, lat: m.lat, lng: m.lng });
 
       if (singleMode) {
         // Draw dashed line between user and sender
@@ -201,11 +206,44 @@ function buildMapHTML(center, sosMarkers, singleMode) {
     });
 
     // Allow React Native to push a refreshed distance into the popup
-    window.updateSosDistance = function(dist) {
+    window.updateSosDistance = function(dist, lat, lng) {
       window.sosMarkerObjects.forEach(function(obj) {
+        // Recalculate distance if coordinates provided
+        var finalDist = dist;
+        if (lat !== undefined && lng !== undefined && obj.lat && obj.lng) {
+          // Calculate distance using Haversine formula
+          var R = 6371000;
+          var toRad = function(d) { return d * Math.PI / 180; };
+          var dLat = toRad(obj.lat - lat);
+          var dLng = toRad(obj.lng - lng);
+          var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(toRad(lat)) * Math.cos(toRad(obj.lat)) *
+                  Math.sin(dLng/2) * Math.sin(dLng/2);
+          var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          var meters = R * c;
+          finalDist = meters < 1000 ? Math.round(meters) + 'm' : (meters/1000).toFixed(1) + 'km';
+        }
+        
         var wasOpen = obj.marker.isPopupOpen();
-        obj.marker.setPopupContent(obj.popupHtml(dist));
+        obj.marker.setPopupContent(obj.popupHtml(finalDist));
         if (wasOpen) obj.marker.openPopup();
+      });
+    };
+
+    // Update polyline when user moves
+    window.updatePolyline = function(lat, lng) {
+      if (!singleMode) return;
+      window.sosMarkerObjects.forEach(function(obj) {
+        // Remove existing polylines and create new one
+        if (window.currentPolyline) {
+          window.leafletMap.removeLayer(window.currentPolyline);
+        }
+        window.currentPolyline = L.polyline([[lat, lng], [obj.lat, obj.lng]], {
+          color: '#d64045',
+          weight: 2.5,
+          opacity: 0.75,
+          dashArray: '8 6',
+        }).addTo(window.leafletMap);
       });
     };
 
@@ -239,6 +277,43 @@ export default function EmergencyMapScreen() {
 
   useEffect(() => { mapReadyRef.current = mapReady; }, [mapReady]);
 
+  // Calculate distance whenever user location changes
+  useEffect(() => {
+    if (singleMode && userLocation && messages[0] && messages[0].latitude != null) {
+      const distance = haversineDistance(
+        userLocation.lat,
+        userLocation.lng,
+        messages[0].latitude,
+        messages[0].longitude
+      );
+      setLiveDistance(distance);
+      
+      // Update map if ready
+      if (mapReadyRef.current && webviewRef.current) {
+        const distanceMeters = getDistanceInMeters(
+          userLocation.lat,
+          userLocation.lng,
+          messages[0].latitude,
+          messages[0].longitude
+        );
+        const distanceStr = distanceMeters < 1000 
+          ? `${Math.round(distanceMeters)}m` 
+          : `${(distanceMeters / 1000).toFixed(1)}km`;
+        
+        webviewRef.current.injectJavaScript(`
+          (function() {
+            if (window.updateSosDistance) {
+              window.updateSosDistance(${JSON.stringify(distanceStr)}, ${userLocation.lat}, ${userLocation.lng});
+            }
+            if (window.updatePolyline) {
+              window.updatePolyline(${userLocation.lat}, ${userLocation.lng});
+            }
+          })(); true;
+        `);
+      }
+    }
+  }, [userLocation, singleMode, messages]);
+
   useEffect(() => {
     isMounted.current = true;
     let locationSubscription = null;
@@ -254,7 +329,7 @@ export default function EmergencyMapScreen() {
         return;
       }
 
-      // ── Step 1: try last-known position for an instant result ────────────────
+      // Step 1: try last-known position for an instant result
       let initLoc = passedLocation;
       if (!initLoc) {
         try {
@@ -267,7 +342,7 @@ export default function EmergencyMapScreen() {
         }
       }
 
-      // ── Step 2: render map immediately with whatever location we have ──────
+      // Step 2: render map immediately with whatever location we have
       if (isMounted.current && initLoc) setUserLocation(initLoc);
 
       const computeCenter = (loc) =>
@@ -276,59 +351,41 @@ export default function EmergencyMapScreen() {
       const buildMarkers = (loc) =>
         messages
           .filter(m => m.latitude != null && m.longitude != null)
-          .map(m => ({
-            lat:      m.latitude,
-            lng:      m.longitude,
-            name:     m.name,
-            message:  m.message,
-            distance: loc
-              ? haversineDistance(loc.lat, loc.lng, m.latitude, m.longitude)
-              : '?',
-            hops: m.hops ?? 1,
-          }));
+          .map(m => {
+            let distance = '?';
+            if (loc) {
+              const meters = getDistanceInMeters(loc.lat, loc.lng, m.latitude, m.longitude);
+              distance = meters < 1000 ? `${Math.round(meters)}m` : `${(meters / 1000).toFixed(1)}km`;
+            }
+            return {
+              lat:      m.latitude,
+              lng:      m.longitude,
+              name:     m.name,
+              message:  m.message,
+              distance: distance,
+              hops: m.hops ?? 1,
+            };
+          });
 
       const initialMarkers = buildMarkers(initLoc);
-
+      const initialDistance = singleMode && initialMarkers.length > 0 ? initialMarkers[0].distance : null;
+      
       if (isMounted.current) {
         setMapHTML(buildMapHTML(computeCenter(initLoc), initialMarkers, singleMode));
         if (singleMode && initialMarkers.length > 0) {
-          setLiveDistance(initialMarkers[0].distance);
+          setLiveDistance(initialDistance);
         }
         setReady(true);
       }
 
-      // ── Step 3: refine with a fresh high-accuracy fix ──────────────────────
+      // Step 3: refine with a fresh high-accuracy fix
       try {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         const refinedLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         if (isMounted.current) {
           setUserLocation(refinedLoc);
-          if (singleMode && messages[0]) {
-            const d = haversineDistance(
-              refinedLoc.lat, refinedLoc.lng,
-              messages[0].latitude, messages[0].longitude
-            );
-            setLiveDistance(d);
-          }
-          if (mapReadyRef.current && webviewRef.current) {
-            try {
-              const distUpdate = singleMode && messages[0]
-                ? `if (window.updateSosDistance) { window.updateSosDistance(${JSON.stringify(
-                    haversineDistance(refinedLoc.lat, refinedLoc.lng, messages[0].latitude, messages[0].longitude)
-                  )}); }`
-                : '';
-              webviewRef.current.injectJavaScript(`
-                (function() {
-                  if (window.userMarker && window.leafletMap) {
-                    window.userMarker.setLatLng([${refinedLoc.lat}, ${refinedLoc.lng}]);
-                  }
-                  ${distUpdate}
-                })(); true;
-              `);
-            } catch (_) {}
-          }
+          initLoc = refinedLoc;
         }
-        initLoc = refinedLoc;
       } catch (e) {
         console.log('Map refined location error:', e);
       }
@@ -336,36 +393,11 @@ export default function EmergencyMapScreen() {
       // Start watching location for real-time marker updates
       try {
         locationSubscription = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.High, distanceInterval: 10, timeInterval: 5000 },
+          { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
           (loc) => {
             if (!isMounted.current) return;
             const pos = { lat: loc.coords.latitude, lng: loc.coords.longitude };
             setUserLocation(pos);
-
-            // Update live distance in single-message mode
-            if (singleMode) {
-              const msg = messages[0];
-              const d = haversineDistance(pos.lat, pos.lng, msg.latitude, msg.longitude);
-              setLiveDistance(d);
-            }
-
-            if (mapReadyRef.current && webviewRef.current && isMounted.current) {
-              try {
-                const distStr = singleMode
-                  ? haversineDistance(pos.lat, pos.lng, messages[0].latitude, messages[0].longitude)
-                  : null;
-                webviewRef.current.injectJavaScript(`
-                  (function() {
-                    if (window.userMarker && window.leafletMap) {
-                      window.userMarker.setLatLng([${pos.lat}, ${pos.lng}]);
-                    }
-                    if (window.updateSosDistance && ${JSON.stringify(distStr)} !== null) {
-                      window.updateSosDistance(${JSON.stringify(distStr)});
-                    }
-                  })(); true;
-                `);
-              } catch (e) {}
-            }
           }
         );
       } catch (e) {
@@ -379,7 +411,7 @@ export default function EmergencyMapScreen() {
       isMounted.current = false;
       locationSubscription?.remove();
     };
-  }, []);
+  }, [messages, passedLocation, singleMode]);
 
   const handleWebViewMessage = (event) => {
     switch (event.nativeEvent.data) {
