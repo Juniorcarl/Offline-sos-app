@@ -7,18 +7,20 @@ import BottomTabs from './navigation/BottomTabs';
 import notificationService from './services/NotificationService';
 
 export default function App() {
-
   const [permissionsReady, setPermissionsReady] = useState(false);
 
   useEffect(() => {
-    notificationService.requestPermissions();
-  }, []);
-
-  useEffect(() => {
     async function init() {
-      await PermissionManager.requestAll();
-      setPermissionsReady(true);
+      try {
+        await notificationService.requestPermissions();
+        await PermissionManager.requestAll();
+      } catch (e) {
+        console.error('Permission init error:', e);
+      } finally {
+        setPermissionsReady(true);
+      }
     }
+
     init();
   }, []);
 

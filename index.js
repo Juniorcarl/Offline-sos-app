@@ -1,9 +1,15 @@
 import 'react-native-get-random-values';
+import { AppRegistry } from 'react-native';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
+import ShakeSOSHeadlessTask from './services/ShakeSOSHeadlessTask';
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
+// Register Android Headless JS task for background shake SOS
+AppRegistry.registerHeadlessTask(
+  'ShakeSOSHeadlessTask',
+  () => ShakeSOSHeadlessTask
+);
+
+// Expo root registration
 registerRootComponent(App);

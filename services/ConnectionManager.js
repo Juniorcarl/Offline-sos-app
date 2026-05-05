@@ -14,6 +14,12 @@ class ConnectionManager {
     this.isScanning = false;
     this._healthInterval = null;
     this._bleNoConnSince = null;
+
+    // ✅ ADDED: prevents duplicate initialization/listeners in background
+    this._initialized = false;
+    this._initializing = null;
+    this._listenersAttached = false;
+
     console.log(`${TAG} ConnectionManager constructed`);
   }
 
@@ -61,49 +67,80 @@ class ConnectionManager {
   }
 
   async initialize() {
-    console.log(`${TAG} ══════════════════════════════════`);
-    console.log(`${TAG} ── initialize() START ──`);
-    console.log(`${TAG} ══════════════════════════════════`);
+    // ✅ ADDED: avoid initializing twice
+    if (this._initialized) {
+      console.log(`${TAG} initialize() skipped — already initialized`);
+      return true;
+    }
 
-    console.log(`${TAG} [1/4] Initializing BluetoothMeshService...`);
-    const btReady = await bluetoothMeshService.initialize();
-    this.bluetoothEnabled = btReady;
-    console.log(`${TAG} [1/4] Bluetooth ready: ${btReady}`);
+    // ✅ ADDED: if already initializing, wait for same promise
+    if (this._initializing) {
+      console.log(`${TAG} initialize() already running — waiting`);
+      return this._initializing;
+    }
 
-    console.log(`${TAG} [2/4] Initializing WifiDirectService...`);
-    const wdReady = await wifiDirectService.initialize();
-    this.wifiDirectEnabled = wdReady;
-    console.log(`${TAG} [2/4] WifiDirect ready: ${wdReady}`);
+    this._initializing = (async () => {
+      console.log(`${TAG} ══════════════════════════════════`);
+      console.log(`${TAG} ── initialize() START ──`);
+      console.log(`${TAG} ══════════════════════════════════`);
 
-    wifiDirectService.onStateChanged = enabled => {
-      console.log(`${TAG} wifiDirectService.onStateChanged(${enabled})`);
-      this.wifiDirectEnabled = enabled;
+      console.log(`${TAG} [1/4] Initializing BluetoothMeshService...`);
+      const btReady = await bluetoothMeshService.initialize();
+      this.bluetoothEnabled = btReady;
+      console.log(`${TAG} [1/4] Bluetooth ready: ${btReady}`);
 
-      if (enabled && this.isScanning) {
-        const wdStats = wifiDirectService.getStats();
-        if (!wdStats.isDiscovering) {
-          console.log(`${TAG} Wi-Fi Direct ON while scanning — start discovery`);
-          wifiDirectService.startDiscovery();
+      console.log(`${TAG} [2/4] Initializing WifiDirectService...`);
+      const wdReady = await wifiDirectService.initialize();
+      this.wifiDirectEnabled = wdReady;
+      console.log(`${TAG} [2/4] WifiDirect ready: ${wdReady}`);
+
+      wifiDirectService.onStateChanged = enabled => {
+        console.log(`${TAG} wifiDirectService.onStateChanged(${enabled})`);
+        this.wifiDirectEnabled = enabled;
+
+        if (enabled && this.isScanning) {
+          const wdStats = wifiDirectService.getStats();
+          if (!wdStats.isDiscovering) {
+            console.log(`${TAG} Wi-Fi Direct ON while scanning — start discovery`);
+            wifiDirectService.startDiscovery();
+          }
         }
+      };
+
+      console.log(`${TAG} [3/4] Initializing MessageService...`);
+      messageService.init(this, bluetoothMeshService.deviceName);
+      console.log(`${TAG} [3/4] MessageService initialized — deviceId=${bluetoothMeshService.deviceName}`);
+
+      // ✅ CHANGED: attach listeners only once
+      if (!this._listenersAttached) {
+        console.log(`${TAG} [4/4] Attaching listeners...`);
+
+        bluetoothMeshService.addListener(this._handleBluetoothDevices.bind(this));
+        bluetoothMeshService.addMessageListener(this._handleIncomingData.bind(this));
+
+        wifiDirectService.addListener(this._handleWifiDirectDevices.bind(this));
+        wifiDirectService.addMessageListener(this._handleIncomingData.bind(this));
+
+        this._listenersAttached = true;
+        console.log(`${TAG} [4/4] listeners attached`);
+      } else {
+        console.log(`${TAG} [4/4] listeners already attached — skipping duplicate`);
       }
-    };
 
-    console.log(`${TAG} [3/4] Initializing MessageService...`);
-    messageService.init(this, bluetoothMeshService.deviceName);
-    console.log(`${TAG} [3/4] MessageService initialized — deviceId=${bluetoothMeshService.deviceName}`);
+      this._initialized = true;
 
-    console.log(`${TAG} [4/4] Attaching listeners...`);
-    bluetoothMeshService.addListener(this._handleBluetoothDevices.bind(this));
-    bluetoothMeshService.addMessageListener(this._handleIncomingData.bind(this));
+      console.log(`${TAG} ══════════════════════════════════`);
+      console.log(`${TAG} ── initialize() DONE — bt=${this.bluetoothEnabled} wd=${this.wifiDirectEnabled}`);
+      console.log(`${TAG} ══════════════════════════════════`);
 
-    wifiDirectService.addListener(this._handleWifiDirectDevices.bind(this));
-    wifiDirectService.addMessageListener(this._handleIncomingData.bind(this));
+      return true;
+    })();
 
-    console.log(`${TAG} [4/4] listeners attached`);
-
-    console.log(`${TAG} ══════════════════════════════════`);
-    console.log(`${TAG} ── initialize() DONE — bt=${this.bluetoothEnabled} wd=${this.wifiDirectEnabled}`);
-    console.log(`${TAG} ══════════════════════════════════`);
+    try {
+      return await this._initializing;
+    } finally {
+      this._initializing = null;
+    }
   }
 
   _handleIncomingData(rawData) {
@@ -258,9 +295,9 @@ class ConnectionManager {
     const preview = String(encodedPayload || '').slice(0, 80);
     console.log(`${TAG} ── sendMessage() preview=${preview}`);
 
-    // BLE path
     const bleConnected = bluetoothMeshService.connectedDevices?.size ?? 0;
     console.log(`${TAG}   BLE connected peers=${bleConnected}`);
+
     if (bleConnected > 0 || this.bluetoothEnabled) {
       try {
         bluetoothMeshService.broadcastData(encodedPayload);
@@ -270,7 +307,6 @@ class ConnectionManager {
       }
     }
 
-    // Wi-Fi Direct path
     const wdStats = wifiDirectService.getStats?.() || {};
     console.log(
       `${TAG}   WD connected=${wdStats.isConnected} socket=${wdStats.socketConnected} trusted=${wdStats.trustedPeer}`
@@ -310,6 +346,11 @@ class ConnectionManager {
     wifiDirectService.cleanup();
     this.devices.clear();
     this.listeners = [];
+
+    // ✅ ADDED: reset init state on cleanup
+    this._initialized = false;
+    this._initializing = null;
+    this._listenersAttached = false;
   }
 }
 

@@ -33,7 +33,9 @@
         "BLUETOOTH_CONNECT",
         "BLUETOOTH_ADVERTISE",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
       ]
     },
     "web": {
@@ -44,9 +46,24 @@
         "projectId": "cb89d92b-ca90-4b3c-82b0-756893f4082f"
       }
     },
-    "assets": ["./assets/tiles"],
+    "assets": [
+      "./assets/tiles",
+      "./assets/sounds/fire-alert.mp3",
+      "./assets/sounds/signal-alert.mp3",
+      "./assets/sounds/simple-tone-loop.mp3"
+    ],
     "plugins": [
       "./fix-androidsvg.js",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/fire-alert.mp3",
+            "./assets/sounds/signal-alert.mp3",
+            "./assets/sounds/simple-tone-loop.mp3"
+          ]
+        }
+      ],
       [
         "react-native-ble-plx",
         {
